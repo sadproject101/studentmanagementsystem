@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMS | Login</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1>Student Management System</h1>
+      <p>Login to continue</p>
+    </div>
+
+    <!-- Static login (for demo): use these links below to open dashboards -->
+    <form class="auth-form" id="loginForm">
+      <label for="email">Email</label>
+      <input id="email" type="email" placeholder="Enter email" required />
+
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="Enter password" required />
+
+      <button type="submit" class="btn btn-primary">Login</button>
+
+      <div id="authError" style="color: #ff5b5b; font-size: 0.9rem; margin-top: 8px; display: none;"></div>
+
+
+    </form>
+
+    <script type="module">
+      import { signIn } from './auth.js'
+
+      const loginForm = document.getElementById('loginForm')
+      const authError = document.getElementById('authError')
+
+      loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault()
+        const email = document.getElementById('email').value
+        const password = document.getElementById('password').value
+
+        authError.style.display = 'none'
+
+        try {
+          const { role } = await signIn(email, password)
+          console.log('Redirecting based on role:', role)
+
+          // Redirect based on the role fetched from the database
+          if (role === 'student') {
+            window.location.href = 'student.html'
+          } else if (role === 'teacher') {
+            window.location.href = 'teacher.html'
+          } else if (role === 'parent') {
+            window.location.href = 'parent.html'
+          } else if (role === 'admin') {
+            window.location.href = 'admin.html'
+          } else {
+            console.warn('Unknown role, defaulting to student.html')
+            window.location.href = 'student.html'
+          }
+        } catch (error) {
+          console.error('Auth handler error:', error)
+          authError.textContent = error.message
+          authError.style.display = 'block'
+        }
+      })
+    </script>
+
+    <p class="auth-footer muted">
+      © 2026 Student Management System • HTML/CSS Prototype
+    </p>
+  </div>
+</body>
+
+</html>

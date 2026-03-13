@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMS | Parent Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">SMS</div>
+        <div>
+          <h2>Parent</h2>
+          <p class="muted">Dashboard</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a class="nav-item active" href="#attendance">View Attendance</a>
+        <a class="nav-item" href="#profile">Update Profile</a>
+        <a class="nav-item" href="#marks">View Recent Marks</a>
+        <a class="nav-item" href="#leave">Verify Leave</a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-ghost" id="logoutBtn">Logout</button>
+      </div>
+    </aside>
+
+    <script type="module">
+      // Check session on load
+      import { checkSession, signOut } from './auth.js'
+      import { supabase } from './supabase.js'
+
+      let currentParentId = null
+      let currentParentEmail = null
+
+      checkSession().then(async session => {
+        if (session && session.user) {
+          currentParentId = session.user.id
+          currentParentEmail = session.user.email
+          await loadParentProfile()
+          await loadParentLeaveRequests()
+          await loadParentAttendance()
+          await loadMarks()
+          loadNotifications()
+          setupRealtimeSubscription()
+        }
+      }).catch(err => console.error(err))
+
+      // Handle logout
+      document.getElementById('logoutBtn').addEventListener('click', () => {
+        signOut()
+      })
+
+      async function loadParentLeaveRequests() {
+        const tbody = document.getElementById('leaveRequestsTbody')
+        if (!tbody || !currentParentEmail) return
+
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">Loading children and requests...</td></tr>'
+
+        try {
+          // 1. Find all students belonging to this parent
+          // The student table has a 'parent' column storing the parent_id (UUID)
+          console.log('[DEBUG] Searching `student` table for currentParentId:', currentParentId)
+
+          const { data: students, error: studErr } = await supabase
+            .from('student')
+            .select('profile_id, name')
+            .eq('parent', currentParentId)
+
+          if (studErr) {
+            console.error('[DEBUG] Student lookup error:', studErr)
+            throw studErr
+          }
+          console.log('[DEBUG] Students found (count):', students ? students.length : 0)
+          console.log('[DEBUG] Full students array:', students)
+
+          // Debug column check if empty
+          if (!students || students.length === 0) {
+            const { data: colCheck } = await supabase.from('student').select('*').limit(1)
+            if (colCheck && colCheck.length > 0) {
+              console.log('[DEBUG] Actual columns in student table:', Object.keys(colCheck[0]))
+            }
+          }
+
+          if (!students || students.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">No linked children found.</td></tr>'
+            return
+          }
+
+          const studentIds = students.map(s => s.profile_id)
+          const studentMap = Object.fromEntries(students.map(s => [s.profile_id, s.name]))
+
+          // 2. Fetch leave requests specifically for these children where status is 'applied'
+          const { data: requests, error: reqErr } = await supabase
+            .from('leave_request')
+            .select('*')
+            .in('requester_id', studentIds)
+            .eq('status', 'applied')
+            .order('start_date', { ascending: false })
+
+          if (reqErr) throw reqErr
+
+          if (!requests || requests.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">No pending leave requests.</td></tr>'
+            return
+          }
+
+          tbody.innerHTML = requests.map(req => `
+            <tr>
+              <td>${studentMap[req.requester_id] || 'Unknown'}</td>
+              <td>${req.start_date}</td>
+              <td>${req.end_date}</td>
+              <td>${req.reason}</td>
+              <td><span class="pill warn">Applied</span></td>
+              <td class="actions">
+                <button type="button" class="btn btn-small btn-primary agree-btn" data-id="${req.id}">Agree</button>
+                <button type="button" class="btn btn-small btn-outline reject-btn" data-id="${req.id}">Reject</button>
+              </td>
+            </tr>
+          `).join('')
+
+          document.querySelectorAll('.agree-btn').forEach(btn => btn.addEventListener('click', () => handleLeaveStatus(btn.dataset.id, 'agreed')))
+          document.querySelectorAll('.reject-btn').forEach(btn => btn.addEventListener('click', () => rejectLeaveRequest(btn.dataset.id)))
+
+        } catch (err) {
+          console.error(err)
+          tbody.innerHTML = `<tr><td colspan="6" style="color:red;text-align:center">Error loading requests: ${err.message}</td></tr>`
+        }
+      }
+
+      async function rejectLeaveRequest(requestId) {
+        if (!confirm('Are you sure you want to reject and delete this leave request?')) return
+        try {
+          const { error } = await supabase
+            .from('leave_request')
+            .delete()
+            .eq('id', requestId)
+
+          if (error) throw error
+
+          alert('Leave request rejected and removed.')
+          loadParentLeaveRequests() // refresh
+        } catch (err) {
+          alert('Error rejecting request: ' + err.message)
+        }
+      }
+
+      async function handleLeaveStatus(requestId, newStatus) {
+        try {
+          // get the student id from the request to notify them
+          const { data: requestData } = await supabase.from('leave_request').select('requester_id').eq('id', requestId).single()
+
+          const { error } = await supabase
+            .from('leave_request')
+            .update({ status: newStatus })
+            .eq('id', requestId)
+
+          if (error) throw error
+          
+          if (requestData) {
+            // Notify student
+            await supabase.from('notifications').insert([{
+              user_role: 'student',
+              target_user_id: requestData.requester_id,
+              title: 'Leave Request Update',
+              message: `Your parent has ${newStatus} your leave request.`
+            }]);
+
+            // Notify all admins if agreed
+            if (newStatus === 'agreed') {
+              await supabase.from('notifications').insert([{
+                user_role: 'admin',
+                target_user_id: null, // to all admins
+                title: 'New Leave Request Approval',
+                message: `A parent has agreed to a leave request and it requires your final approval.`
+              }]);
+            }
+          }
+
+          alert(`Leave request marked as ${newStatus}.`)
+          loadParentLeaveRequests() // refresh
+        } catch (err) {
+          alert('Error updating status: ' + err.message)
+        }
+      }
+
+      // ── Load Parent Attendance Overview ──────────────────────────────
+      async function loadParentAttendance() {
+        const tbody = document.getElementById('parentAttendanceTbody')
+        if (!tbody || !currentParentId) return
+
+        try {
+          // 1. Get Children
+          const { data: students, error: studErr } = await supabase
+            .from('student')
+            .select('profile_id, name')
+            .eq('parent', currentParentId)
+
+          if (studErr) throw studErr
+
+          if (!students || students.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center">No linked children found.</td></tr>'
+            return
+          }
+
+          const studentIds = students.map(s => s.profile_id)
+          const studentMap = Object.fromEntries(students.map(s => [s.profile_id, s.name]))
+
+          // 2. Get Attendance
+          const { data: attendance, error: attErr } = await supabase
+            .from('attendance')
+            .select('student_id, status, date, subject')
+            .in('student_id', studentIds)
+            .order('date', { ascending: false })
+
+          if (attErr) throw attErr
+
+          // 3. Aggregate by Student -> Month -> Subject
+          const stats = {}
+          studentIds.forEach(id => { stats[id] = {} })
+
+          if (attendance && attendance.length > 0) {
+            attendance.forEach(r => {
+              const studentId = r.student_id
+              const st = r.status.toLowerCase()
+              const month = r.date ? r.date.substring(0, 7) : 'Unknown'
+              const subject = r.subject || 'Unknown'
+
+              if (!stats[studentId][month]) stats[studentId][month] = {}
+              if (!stats[studentId][month][subject]) stats[studentId][month][subject] = { present: 0, total: 0 }
+
+              stats[studentId][month][subject].total++
+              if (st === 'present') {
+                  stats[studentId][month][subject].present++
+              }
+            })
+          } else {
+             tbody.innerHTML = '<tr><td colspan="6" style="text-align:center" class="muted">No recent attendance found.</td></tr>'
+             return
+          }
+
+          // 4. Render
+          let html = ''
+          for (const studentId of studentIds) {
+             const studentName = studentMap[studentId] || 'Unknown'
+             const studentData = stats[studentId]
+             
+             if (Object.keys(studentData).length === 0) {
+                html += `<tr><td>${studentName}</td><td colspan="5" class="muted">No attendance tracked yet.</td></tr>`
+                continue
+             }
+
+             // Sort months descending
+             const sortedMonths = Object.keys(studentData).sort().reverse()
+
+             for (const month of sortedMonths) {
+                const dateObj = new Date(month + '-01')
+                const monthName = isNaN(dateObj) ? month : dateObj.toLocaleString('en-US', { month: 'long', year: 'numeric' })
+                
+                html += `<tr style="background:rgba(255,255,255,0.05);"><td colspan="6" style="font-weight:600; text-align:center;">${studentName} - ${monthName}</td></tr>`
+
+                for (const [subject, counts] of Object.entries(studentData[month])) {
+                   const percent = Math.round((counts.present / counts.total) * 100)
+                   const absent = counts.total - counts.present
+                   let pillClass = 'good'
+                   if (percent < 75) pillClass = 'warn'
+                   if (percent < 50) pillClass = 'danger'
+                   
+                   html += `
+                     <tr>
+                       <td>${studentName}</td>
+                       <td>${monthName}</td>
+                       <td>${subject}</td>
+                       <td>${counts.present}</td>
+                       <td>${absent}</td>
+                       <td><span class="pill ${pillClass}">${percent}%</span></td>
+                     </tr>
+                   `
+                }
+             }
+          }
+
+          tbody.innerHTML = html
+
+        } catch (err) {
+          console.error('[loadParentAttendance error]', err)
+          tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:red;">Error loading attendance</td></tr>'
+        }
+      }
+      // ── Load Parent Profile ──────────────────────────────
+      async function loadParentProfile() {
+        try {
+          const { data, error } = await supabase
+            .from('parents')
+            .select('parent_name, parentsemailaddress, parents_phonenumber')
+            .eq('parents_id', currentParentId)
+            .single()
+
+          if (!error && data) {
+            document.getElementById('parentWelcomeName').textContent = `Welcome, ${data.parent_name || 'Parent'}`
+            document.getElementById('parentEmailBadge').textContent = data.parentsemailaddress || currentParentEmail
+
+            document.getElementById('parentNameInput').value = data.parent_name || ''
+            document.getElementById('parentPhoneInput').value = data.parents_phonenumber || ''
+            document.getElementById('parentEmailInput').value = data.parentsemailaddress || ''
+          } else {
+            document.getElementById('parentEmailBadge').textContent = currentParentEmail || 'Parent'
+          }
+        } catch (err) {
+          console.error('[loadParentProfile error]', err)
+        }
+      }
+
+      // ── Marks Module ──────────────────────────────────────────────
+      async function loadMarks() {
+         const tbody = document.querySelector('#marks tbody')
+         if(!tbody) return
+         
+         if (!currentParentId) return
+
+         tbody.innerHTML = '<tr><td colspan="4" style="text-align:center">Loading marks...</td></tr>'
+         
+         try {
+             // 1. Find all students belonging to this parent
+             const { data: students, error: studErr } = await supabase
+               .from('student')
+               .select('profile_id, name')
+               .eq('parent', currentParentId)
+             
+             if (studErr) throw studErr
+
+             if (!students || students.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center" class="muted">No students linked to this account.</td></tr>'
+                return
+             }
+             
+             const childIds = students.map(c => c.profile_id)
+             const studentMap = Object.fromEntries(students.map(s => [s.profile_id, s.name]))
+             
+             const { data, error } = await supabase.from('marks')
+                 .select('student_id, subject, exam, marks, remarks, date')
+                 .in('student_id', childIds)
+                 .order('date', {ascending: false})
+                 .limit(15)
+                 
+             if(error) throw error
+             if(!data || data.length === 0) {
+                 tbody.innerHTML = '<tr><td colspan="4" style="text-align:center" class="muted">No recent marks found.</td></tr>'
+                 return
+             }
+             
+             tbody.innerHTML = data.map(row => `
+               <tr>
+                 <td>${studentMap[row.student_id] || 'Unknown'}</td>
+                 <td>${row.subject || '-'}</td>
+                 <td>${row.exam || '-'}</td>
+                 <td>${row.marks}</td>
+               </tr>
+             `).join('')
+             
+         } catch(err) {
+             console.error('Marks fetch error:', err)
+             tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:red;">Failed to load marks.</td></tr>`
+         }
+      }
+
+      // ── Notifications Logic ──────────────────────────────────────────
+      async function loadNotifications() {
+         const panel = document.getElementById('notificationsContent')
+         const badge = document.getElementById('notificationBadge')
+         if(!panel || !currentParentId) return
+
+         try {
+            const { data, error } = await supabase.from('notifications')
+               .select('*')
+               .eq('target_user_id', currentParentId)
+               .order('created_at', { ascending: false })
+               .limit(20)
+
+            if (error) throw error
+
+            const unreadCount = data ? data.filter(n => !n.is_read).length : 0
+            if (unreadCount > 0) {
+              badge.textContent = unreadCount
+              badge.style.display = 'flex'
+            } else {
+              badge.style.display = 'none'
+            }
+
+            if (!data || data.length === 0) {
+               panel.innerHTML = '<div class="no-notifications">No notifications yet.</div>'
+               return
+            }
+
+            panel.innerHTML = data.map(n => `
+              <div class="notification-item ${n.is_read ? '' : 'unread'}" data-id="${n.id}">
+                 <div class="notification-title">${n.title}</div>
+                 <div class="notification-message">${n.message}</div>
+                 <div class="notification-time">${new Date(n.created_at).toLocaleString()}</div>
+              </div>
+            `).join('')
+
+            // Add click to mark as read
+            document.querySelectorAll('.notification-item.unread').forEach(item => {
+               item.addEventListener('click', async (e) => {
+                  const id = e.currentTarget.dataset.id
+                  await supabase.from('notifications').update({is_read: true}).eq('id', id)
+                  loadNotifications() // refresh
+               })
+            })
+
+         } catch (err) {
+            console.error('Error loading notifications:', err)
+         }
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+         const notifBell = document.getElementById('notificationBell')
+         const notifPanel = document.getElementById('notificationsPanel')
+         const markAllRead = document.getElementById('markAllReadBtn')
+
+         if (notifBell) {
+           notifBell.addEventListener('click', (e) => {
+             e.stopPropagation()
+             notifPanel.classList.toggle('active')
+           })
+         }
+
+         if (markAllRead) {
+           markAllRead.addEventListener('click', async (e) => {
+             e.stopPropagation()
+             if(!currentParentId) return
+             await supabase.from('notifications').update({is_read: true}).eq('target_user_id', currentParentId).eq('is_read', false)
+             loadNotifications()
+           })
+         }
+
+         window.addEventListener('click', () => {
+            if(notifPanel && notifPanel.classList.contains('active')) {
+               notifPanel.classList.remove('active')
+            }
+         })
+
+         if (notifPanel) {
+           notifPanel.addEventListener('click', e => e.stopPropagation())
+         }
+      })
+
+      // ── Realtime Subscription ──────────────────────────────────────────
+      function setupRealtimeSubscription() {
+         if (!currentParentId) return
+
+         supabase.channel('parent-dashboard-channel')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_request' }, payload => {
+               // Reload leave requests to see if child made one
+               console.log('Leave Request Change received!', payload)
+               loadParentLeaveRequests()
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'marks' }, payload => {
+               console.log('Marks Change received!', payload)
+               loadMarks()
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `target_user_id=eq.${currentParentId}` }, payload => {
+               console.log('Notification Change received!', payload)
+               loadNotifications()
+            })
+            .subscribe((status) => {
+               console.log('Realtime subscription status:', status)
+            })
+      }
+
+      // Handle Profile Save
+      document.addEventListener('DOMContentLoaded', () => {
+        const profileForm = document.getElementById('parentProfileForm')
+        if (profileForm) {
+          profileForm.addEventListener('submit', async (e) => {
+            e.preventDefault()
+            const btn = document.getElementById('saveParentProfileBtn')
+            const orig = btn.textContent
+            btn.textContent = 'Saving...'
+            btn.disabled = true
+
+            try {
+              const { error } = await supabase
+                .from('parents')
+                .upsert({
+                  parents_id: currentParentId,
+                  parent_name: document.getElementById('parentNameInput').value,
+                  parents_phonenumber: document.getElementById('parentPhoneInput').value,
+                  parentsemailaddress: document.getElementById('parentEmailInput').value
+                })
+
+              if (error) throw error
+              alert('Profile updated successfully!')
+              loadParentProfile() // refresh topbar
+            } catch (err) {
+              alert('Failed to update profile: ' + err.message)
+            } finally {
+               btn.textContent = orig
+               btn.disabled = false
+            }
+          })
+        }
+      })
+
+      // ── Navigation Logic ──────────────────────────────────────────
+      document.addEventListener('DOMContentLoaded', () => {
+        const navItems = document.querySelectorAll('.nav-item')
+        const sections = document.querySelectorAll('.page-section')
+        
+        navItems.forEach(item => {
+          item.addEventListener('click', (e) => {
+            const href = item.getAttribute('href')
+            if (href.startsWith('#')) {
+              e.preventDefault()
+              const targetId = href.substring(1)
+              
+              navItems.forEach(nav => nav.classList.remove('active'))
+              item.classList.add('active')
+              
+              sections.forEach(sec => {
+                if (sec.id === targetId) {
+                  sec.style.display = 'block'
+                } else {
+                  sec.style.display = 'none'
+                }
+              })
+            }
+          })
+        })
+      })
+    </script>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="parentWelcomeName">Welcome, Parent</h1>
+          <p class="muted">Monitor student performance and requests.</p>
+        </div>
+        <div class="topbar-actions" style="align-items: center;">
+          <span class="badge" id="parentEmailBadge">Loading...</span>
+
+          <!-- Notification Bell -->
+          <div class="notification-bell" id="notificationBell" style="margin-left: 10px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <div class="notification-badge" id="notificationBadge">0</div>
+            
+            <!-- Notification Panel -->
+            <div class="notifications-panel" id="notificationsPanel">
+               <div class="notifications-header">
+                 <span>Notifications</span>
+                 <span class="mark-all-read" id="markAllReadBtn">Mark all as read</span>
+               </div>
+               <div class="notifications-content" id="notificationsContent">
+                 <div class="no-notifications">Loading...</div>
+               </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="grid">
+        <!-- Attendance -->
+        <div id="attendance" class="page-section span-12" style="display: block;">
+          <section class="card">
+            <div class="card-head">
+              <h3>Attendance Overview</h3>
+              <p class="muted">Attendance summary for all linked children</p>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Student Name</th>
+                    <th>Month</th>
+                    <th>Subject</th>
+                    <th>Present</th>
+                    <th>Absent</th>
+                    <th>Percentage</th>
+                  </tr>
+                </thead>
+                <tbody id="parentAttendanceTbody">
+                  <tr>
+                    <td colspan="6" style="text-align:center">Loading attendance...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- Profile -->
+        <div id="profile" class="page-section span-12" style="display: none;">
+          <section class="card">
+            <div class="card-head">
+              <h3>Update Profile</h3>
+              <p class="muted">Parent contact details</p>
+            </div>
+
+            <form class="form" id="parentProfileForm">
+              <div class="form-row">
+                <div class="field">
+                  <label>Parent Name</label>
+                  <input type="text" id="parentNameInput" placeholder="Enter name" />
+                </div>
+                <div class="field">
+                  <label>Phone</label>
+                  <input type="tel" id="parentPhoneInput" placeholder="Enter phone" />
+                </div>
+              </div>
+
+              <div class="field">
+                <label>Email</label>
+                <input type="email" id="parentEmailInput" placeholder="Enter email" readonly />
+              </div>
+
+              <button type="submit" id="saveParentProfileBtn" class="btn btn-primary">Save Changes</button>
+            </form>
+          </section>
+        </div>
+
+        <!-- Marks -->
+        <div id="marks" class="page-section span-12" style="display: none;">
+          <section class="card">
+            <div class="card-head">
+              <h3>Recent Marks</h3>
+              <p class="muted">Student latest results</p>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Student Name</th>
+                    <th>Subject</th>
+                    <th>Test</th>
+                    <th>Marks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td colspan="4" style="text-align:center" class="muted">No recent marks found.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- Leave -->
+        <div id="leave" class="page-section span-12" style="display: none;">
+          <section class="card">
+            <div class="card-head">
+              <h3>Verify Leave Requests</h3>
+              <p class="muted">Review pending leave requests for your children</p>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Student Name</th>
+                    <th>Date From</th>
+                    <th>Date To</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="leaveRequestsTbody">
+                  <tr>
+                    <td colspan="6" style="text-align:center">Loading...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+
+</html>

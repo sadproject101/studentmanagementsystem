@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMS | Student Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">SMS</div>
+        <div>
+          <h2>Student</h2>
+          <p class="muted">Dashboard</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a class="nav-item active" href="#attendance">View My Attendance</a>
+        <a class="nav-item" href="#profile">Update My Profile</a>
+        <a class="nav-item" href="#marks">View Recent Marks</a>
+        <a class="nav-item" href="#leave">Request Leave</a>
+        <a class="nav-item" href="#complaints">Complaints</a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-ghost" id="logoutBtn">Logout</button>
+      </div>
+    </aside>
+
+    <script type="module">
+      import { checkSession, signOut } from './auth.js'
+      import { supabase } from './supabase.js'
+
+      let currentUserId = null
+
+      // Check session on load
+      checkSession().then(async (session) => {
+        if (session && session.user) {
+          currentUserId = session.user.id
+          await loadStudentProfile(currentUserId)
+          loadLeaveRequests()
+          loadAttendance()
+          loadMarks()
+          loadComplaints()
+          loadNotifications()
+          setupRealtimeSubscription()
+        }
+      }).catch(err => {
+        console.error('Session error:', err)
+      })
+
+      // Handle logout
+      document.getElementById('logoutBtn').addEventListener('click', () => {
+        signOut()
+      })
+
+
+
+      // ── Leave Request ─────────────────────────────────────────────
+      document.getElementById('leaveForm').addEventListener('submit', async (e) => {
+        e.preventDefault()
+        if (!currentUserId) return
+
+        const btn = document.getElementById('leaveSubmitBtn')
+        const orig = btn.textContent
+        btn.textContent = 'Submitting...'
+        btn.disabled = true
+
+        const start_date = document.getElementById('leaveFrom').value
+        const end_date = document.getElementById('leaveTo').value
+        const reason = document.getElementById('leaveReason').value.trim()
+
+        if (!start_date || !end_date || !reason) {
+          alert('Please fill in all fields.')
+          btn.textContent = orig; btn.disabled = false; return
+        }
+        if (end_date < start_date) {
+          alert('"To" date cannot be before "From" date.')
+          btn.textContent = orig; btn.disabled = false; return
+        }
+
+        try {
+          const { error } = await supabase.from('leave_request').insert([{
+            requester_id: currentUserId,
+            start_date,
+            end_date,
+            reason,
+            status: 'applied',
+            approved_by: null
+          }])
+          if (error) throw error
+          
+          // Notify the parent
+          const { data: studentData } = await supabase.from('student').select('parent, name').eq('profile_id', currentUserId).single()
+          if (studentData && studentData.parent) {
+            await supabase.from('notifications').insert([{
+              user_role: 'parent',
+              target_user_id: studentData.parent,
+              title: 'New Leave Request',
+              message: `${studentData.name} has submitted a leave request from ${start_date} to ${end_date}.`
+            }]);
+          }
+
+          alert('Leave request submitted!')
+          e.target.reset()
+          loadLeaveRequests()
+        } catch (err) {
+          alert('Failed to submit: ' + err.message)
+        } finally {
+          btn.textContent = orig
+          btn.disabled = false
+        }
+      })
+
+      async function loadLeaveRequests() {
+        const tbody = document.getElementById('leaveHistoryTbody')
+        if (!tbody || !currentUserId) return
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center">Loading...</td></tr>'
+        const { data, error } = await supabase
+          .from('leave_request')
+          .select('start_date, end_date, reason, status')
+          .eq('requester_id', currentUserId)
+          .order('start_date', { ascending: false })
+        if (error) { tbody.innerHTML = `<tr><td colspan="4">${error.message}</td></tr>`; return }
+        if (!data || data.length === 0) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center">No requests yet.</td></tr>'; return }
+        const pillClass = { applied: 'warn', approved: 'good', rejected: 'ok' }
+        tbody.innerHTML = data.map(r => `
+          <tr>
+            <td>${r.start_date}</td><td>${r.end_date}</td>
+            <td>${r.reason}</td>
+            <td><span class="pill ${pillClass[r.status] || ''}">${r.status}</span></td>
+          </tr>`).join('')
+      }
+      // ── Load Attendance ──────────────────────────────────────────────
+      async function loadAttendance() {
+        const tbody = document.getElementById('attTbody')
+        if (!tbody || !currentUserId) return
+
+        try {
+          const { data, error } = await supabase
+            .from('attendance')
+            .select('date, status, subject, remarks')
+            .eq('student_id', currentUserId)
+            .order('date', { ascending: false })
+
+          if (error) throw error
+
+          let presentCount = 0
+          let absentCount = 0
+
+          if (!data || data.length === 0) {
+             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">No records yet.</td></tr>'
+             document.getElementById('attPresent').textContent = '0'
+             document.getElementById('attAbsent').textContent = '0'
+             document.getElementById('attPercent').textContent = '0%'
+             return
+          }
+
+          // Group by Month and Subject
+          const monthlyData = {}
+          data.forEach(r => {
+             const st = r.status.toLowerCase()
+             if (st === 'present') presentCount++
+             if (st === 'absent' || st === 'late') absentCount++
+             
+             // Extract month (YYYY-MM) from date
+             const month = r.date ? r.date.substring(0, 7) : 'Unknown'
+             const subject = r.subject || 'Unknown'
+             
+             if (!monthlyData[month]) monthlyData[month] = {}
+             if (!monthlyData[month][subject]) monthlyData[month][subject] = { present: 0, total: 0 }
+             
+             monthlyData[month][subject].total++
+             if (st === 'present') {
+                 monthlyData[month][subject].present++
+             }
+          })
+
+          let html = ''
+          for (const [month, subjects] of Object.entries(monthlyData)) {
+             // Create a month header row
+             const dateObj = new Date(month + '-01')
+             const monthName = isNaN(dateObj) ? month : dateObj.toLocaleString('en-US', { month: 'long', year: 'numeric' })
+             
+             html += `<tr style="background:rgba(255,255,255,0.05);"><td colspan="5" style="font-weight:600; text-align:center;">${monthName}</td></tr>`
+             
+             for (const [subject, counts] of Object.entries(subjects)) {
+                const percent = Math.round((counts.present / counts.total) * 100)
+                const absent = counts.total - counts.present
+                let pillClass = 'good'
+                if (percent < 75) pillClass = 'warn'
+                if (percent < 50) pillClass = 'danger' // using danger/warn
+                
+                html += `
+                  <tr>
+                    <td>-</td>
+                    <td>${subject}</td>
+                    <td>${counts.present}</td>
+                    <td>${absent}</td>
+                    <td><span class="pill ${pillClass}">${percent}%</span></td>
+                  </tr>
+                `
+             }
+          }
+
+          tbody.innerHTML = html
+
+          document.getElementById('attPresent').textContent = presentCount
+          document.getElementById('attAbsent').textContent = absentCount
+
+          const total = presentCount + absentCount
+          const percent = total === 0 ? 0 : Math.round((presentCount / total) * 100)
+          document.getElementById('attPercent').textContent = percent + '%'
+
+        } catch (err) {
+          console.error(err)
+          tbody.innerHTML = `<tr><td colspan="5" style="color:red;text-align:center">Failed to load attendance</td></tr>`
+        }
+      }
+
+      // ── Load Student Profile ──────────────────────────────
+      async function loadStudentProfile() {
+        try {
+          const { data, error } = await supabase
+            .from('student')
+            .select('*')
+            .eq('profile_id', currentUserId)
+            .single()
+
+          if (!error && data) {
+            document.getElementById('studentWelcomeName').textContent = `Welcome, ${data.name || 'Student'}`
+            document.getElementById('studentRollNo').textContent = data.roll_number || '-'
+            document.getElementById('studentDept').textContent = data.department || '-'
+
+            document.getElementById('studentRollNoInput').value = data.roll_number || ''
+            document.getElementById('studentName').value = data.name || ''
+            document.getElementById('studentPhone').value = data.phone_num || ''
+            document.getElementById('studentDob').value = data.date_of_birth || ''
+            document.getElementById('studentGender').value = data.gender || ''
+            document.getElementById('studentDeptInput').value = data.department || ''
+          }
+        } catch (err) {
+          console.error('[loadStudentProfile error]', err)
+        }
+      }
+
+      // Handle Profile Save
+      document.addEventListener('DOMContentLoaded', () => {
+        const profileForm = document.getElementById('profileForm')
+        if (profileForm) {
+          profileForm.addEventListener('submit', async (e) => {
+            e.preventDefault()
+            const btn = document.querySelector('#profileForm button[type="submit"]') || profileForm.querySelector('button')
+            const orig = btn.textContent
+            btn.textContent = 'Saving...'
+            btn.disabled = true
+
+            const payload = {
+              roll_number: document.getElementById('studentRollNoInput').value,
+              name: document.getElementById('studentName').value,
+              phone_num: document.getElementById('studentPhone').value || null,
+              date_of_birth: document.getElementById('studentDob').value || null,
+              gender: document.getElementById('studentGender').value || null,
+              department: document.getElementById('studentDeptInput').value || null
+            }
+
+            try {
+              const { error } = await supabase
+                .from('student')
+                .update(payload)
+                .eq('profile_id', currentUserId)
+
+              if (error) throw error
+              alert('Profile updated successfully!')
+              loadStudentProfile() // refresh
+            } catch (err) {
+              alert('Failed to update profile: ' + err.message)
+            } finally {
+              btn.textContent = orig
+              btn.disabled = false
+            }
+          })
+        }
+      })
+
+      // ── Marks Module ──────────────────────────────────────────────
+      async function loadMarks() {
+         const tbody = document.querySelector('#marks tbody')
+         if(!tbody) return
+
+         tbody.innerHTML = '<tr><td colspan="4" style="text-align:center">Loading marks...</td></tr>'
+         
+         try {
+             // currentStudentId is loaded from loadStudentProfile
+             const { data, error } = await supabase.from('marks')
+                 .select('subject, exam, marks, remarks, date')
+                 .eq('student_id', currentUserId)
+                 .order('date', {ascending: false})
+                 .limit(10)
+                 
+             if(error) throw error
+             if(!data || data.length === 0) {
+                 tbody.innerHTML = '<tr><td colspan="4" style="text-align:center" class="muted">No recent marks found.</td></tr>'
+                 return
+             }
+             
+             tbody.innerHTML = data.map(row => `
+               <tr>
+                 <td>${row.subject || '-'}</td>
+                 <td>${row.exam || '-'}</td>
+                 <td>${row.marks}</td>
+                 <td>${row.remarks || '-'}</td>
+               </tr>
+             `).join('')
+             
+         } catch(err) {
+             console.error('Marks fetch error:', err)
+             tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:red;">Failed to load marks.</td></tr>`
+         }
+      }
+
+      // ── Complaints logic ───────────────────────────────────────
+      async function loadComplaints() {
+        const tbody = document.getElementById('complaintsTbody')
+        if (!tbody || !currentUserId) return
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center">Loading complaints...</td></tr>'
+
+        try {
+          const { data, error } = await supabase
+            .from('complaints')
+            .select('*')
+            .eq('student_id', currentUserId)
+            .order('created_at', { ascending: false })
+
+          if (error) throw error
+
+          if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center" class="muted">No complaints submitted.</td></tr>'
+            return
+          }
+
+          const pillClass = { pending: 'warn', acknowledged: 'good', rejected: 'ok' }
+          
+          tbody.innerHTML = data.map(c => `
+            <tr>
+              <td>${c.title}</td>
+              <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${c.description}">${c.description}</td>
+              <td><span class="pill ${pillClass[c.status] || ''}">${c.status}</span></td>
+              <td>${c.admin_reason || '-'}</td>
+            </tr>
+          `).join('')
+        } catch(err) {
+          tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:red;">Failed to load complaints.</td></tr>`
+        }
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        const complaintForm = document.getElementById('complaintForm')
+        if (complaintForm) {
+          complaintForm.addEventListener('submit', async (e) => {
+            e.preventDefault()
+            const btn = document.getElementById('complaintSubmitBtn')
+            const orig = btn.textContent
+            btn.textContent = 'Submitting...'
+            btn.disabled = true
+
+            try {
+              const title = document.getElementById('complaintTitle').value
+              const description = document.getElementById('complaintDesc').value
+
+              const { error } = await supabase.from('complaints').insert([{
+                student_id: currentUserId,
+                title,
+                description
+              }])
+
+              if (error) throw error
+              alert('Complaint submitted successfully!')
+              complaintForm.reset()
+              loadComplaints()
+            } catch (err) {
+              alert('Error submitting complaint: ' + err.message)
+            } finally {
+               btn.textContent = orig
+               btn.disabled = false
+            }
+          })
+        }
+      })
+
+      // ── Notifications Logic ──────────────────────────────────────────
+      async function loadNotifications() {
+         const panel = document.getElementById('notificationsContent')
+         const badge = document.getElementById('notificationBadge')
+         if(!panel || !currentUserId) return
+
+         try {
+            const { data, error } = await supabase.from('notifications')
+               .select('*')
+               .eq('target_user_id', currentUserId)
+               .order('created_at', { ascending: false })
+               .limit(20)
+
+            if (error) throw error
+
+            const unreadCount = data ? data.filter(n => !n.is_read).length : 0
+            if (unreadCount > 0) {
+              badge.textContent = unreadCount
+              badge.style.display = 'flex'
+            } else {
+              badge.style.display = 'none'
+            }
+
+            if (!data || data.length === 0) {
+               panel.innerHTML = '<div class="no-notifications">No notifications yet.</div>'
+               return
+            }
+
+            panel.innerHTML = data.map(n => `
+              <div class="notification-item ${n.is_read ? '' : 'unread'}" data-id="${n.id}">
+                 <div class="notification-title">${n.title}</div>
+                 <div class="notification-message">${n.message}</div>
+                 <div class="notification-time">${new Date(n.created_at).toLocaleString()}</div>
+              </div>
+            `).join('')
+
+            // Add click to mark as read
+            document.querySelectorAll('.notification-item.unread').forEach(item => {
+               item.addEventListener('click', async (e) => {
+                  const id = e.currentTarget.dataset.id
+                  await supabase.from('notifications').update({is_read: true}).eq('id', id)
+                  loadNotifications() // refresh
+               })
+            })
+
+         } catch (err) {
+            console.error('Error loading notifications:', err)
+         }
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+         const notifBell = document.getElementById('notificationBell')
+         const notifPanel = document.getElementById('notificationsPanel')
+         const markAllRead = document.getElementById('markAllReadBtn')
+
+         if (notifBell) {
+           notifBell.addEventListener('click', (e) => {
+             e.stopPropagation()
+             notifPanel.classList.toggle('active')
+           })
+         }
+
+         if (markAllRead) {
+           markAllRead.addEventListener('click', async (e) => {
+             e.stopPropagation()
+             if(!currentUserId) return
+             await supabase.from('notifications').update({is_read: true}).eq('target_user_id', currentUserId).eq('is_read', false)
+             loadNotifications()
+           })
+         }
+
+         window.addEventListener('click', () => {
+            if(notifPanel && notifPanel.classList.contains('active')) {
+               notifPanel.classList.remove('active')
+            }
+         })
+
+         if (notifPanel) {
+           notifPanel.addEventListener('click', e => e.stopPropagation())
+         }
+      })
+
+      // ── Realtime Subscription ──────────────────────────────────────────
+      function setupRealtimeSubscription() {
+         if (!currentUserId) return
+
+         supabase.channel('student-dashboard-channel')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_request', filter: `requester_id=eq.${currentUserId}` }, payload => {
+               console.log('Leave Request Change received!', payload)
+               loadLeaveRequests()
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'marks', filter: `student_id=eq.${currentUserId}` }, payload => {
+               console.log('Marks Change received!', payload)
+               loadMarks()
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints', filter: `student_id=eq.${currentUserId}` }, payload => {
+               console.log('Complaint Change received!', payload)
+               loadComplaints()
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `target_user_id=eq.${currentUserId}` }, payload => {
+               console.log('Notification Change received!', payload)
+               loadNotifications()
+            })
+            .subscribe((status) => {
+               console.log('Realtime subscription status:', status)
+            })
+      }
+
+      // ── Navigation Logic ──────────────────────────────────────────
+      document.addEventListener('DOMContentLoaded', () => {
+        const navItems = document.querySelectorAll('.nav-item')
+        const sections = document.querySelectorAll('.page-section')
+        
+        navItems.forEach(item => {
+          item.addEventListener('click', (e) => {
+            const href = item.getAttribute('href')
+            if (href.startsWith('#')) {
+              e.preventDefault()
+              const targetId = href.substring(1)
+              
+              navItems.forEach(nav => nav.classList.remove('active'))
+              item.classList.add('active')
+              
+              sections.forEach(sec => {
+                if (sec.id === targetId) {
+                  sec.style.display = 'block'
+                } else {
+                  sec.style.display = 'none'
+                }
+              })
+            }
+          })
+        })
+      })
+    </script>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="studentWelcomeName">Welcome, Student</h1>
+          <p class="muted">Here’s your academic overview.</p>
+        </div>
+        <div class="topbar-actions" style="align-items: center;">
+          <span class="badge">Roll No: <span id="studentRollNo">Loading...</span></span>
+          <span class="badge">Program: <span id="studentDept">Loading...</span></span>
+          
+          <!-- Notification Bell -->
+          <div class="notification-bell" id="notificationBell" style="margin-left: 10px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <div class="notification-badge" id="notificationBadge">0</div>
+            
+            <!-- Notification Panel -->
+            <div class="notifications-panel" id="notificationsPanel">
+               <div class="notifications-header">
+                 <span>Notifications</span>
+                 <span class="mark-all-read" id="markAllReadBtn">Mark all as read</span>
+               </div>
+               <div class="notifications-content" id="notificationsContent">
+                 <div class="no-notifications">Loading...</div>
+               </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="grid">
+        <!-- Attendance -->
+        <div id="attendance" class="page-section span-12" style="display: block;">
+          <section class="card">
+            <div class="card-head">
+              <h3>My Attendance</h3>
+              <p class="muted">Overall summary</p>
+            </div>
+
+            <div class="stats">
+              <div class="stat">
+                <p class="muted">Present</p>
+                <h2 id="attPresent">0</h2>
+              </div>
+              <div class="stat">
+                <p class="muted">Absent</p>
+                <h2 id="attAbsent">0</h2>
+              </div>
+              <div class="stat">
+                <p class="muted">Percentage</p>
+                <h2 id="attPercent">0%</h2>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date (Breakdown)</th>
+                    <th>Subject</th>
+                    <th>Present</th>
+                    <th>Absent</th>
+                    <th>Percentage</th>
+                  </tr>
+                </thead>
+                <tbody id="attTbody">
+                  <tr>
+                    <td colspan="5" style="text-align:center">Loading attendance...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- Profile -->
+        <div id="profile" class="page-section span-12" style="display: none;">
+          <section class="card">
+            <div class="card-head">
+              <h3>Update Profile</h3>
+              <p class="muted">Edit basic details</p>
+            </div>
+
+            <form class="form" id="profileForm">
+              <div class="form-row">
+                <div class="field">
+                  <label>Roll Number</label>
+                  <input type="number" id="studentRollNoInput" placeholder="Enter roll no" />
+                </div>
+                <div class="field">
+                  <label>Full Name</label>
+                  <input type="text" id="studentName" placeholder="Enter name" />
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="field">
+                  <label>Phone Number</label>
+                  <input type="number" id="studentPhone" placeholder="Enter phone" />
+                </div>
+                <div class="field">
+                  <label>Date of Birth</label>
+                  <input type="date" id="studentDob" />
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="field">
+                  <label>Department</label>
+                  <select id="studentDeptInput">
+                    <option value="">Select Department</option>
+                    <option value="csit">CSIT</option>
+                    <option value="bba">BBA</option>
+                    <option value="bit">BIT</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Gender</label>
+                  <select id="studentGender">
+                    <option value="">Select Gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <button type="submit" id="saveProfileBtn" class="btn btn-primary">Save Changes</button>
+            </form>
+          </section>
+        </div>
+
+        <!-- Marks -->
+        <div id="marks" class="page-section span-12" style="display: none;">
+          <section class="card">
+            <div class="card-head">
+              <h3>Recent Marks</h3>
+              <p class="muted">Latest test results</p>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                     <th>Subject</th>
+                     <th>Test</th>
+                     <th>Marks</th>
+                     <th>Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td colspan="4" style="text-align:center" class="muted">No recent marks found.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- Leave -->
+        <div id="leave" class="page-section span-12" style="display: none;">
+          <section class="card">
+            <div class="card-head">
+              <h3>Request Leave</h3>
+              <p class="muted">Submit leave request for approval</p>
+            </div>
+
+            <form class="form" id="leaveForm">
+              <div class="form-row">
+                <div class="field">
+                  <label>From</label>
+                  <input type="date" id="leaveFrom" required />
+                </div>
+                <div class="field">
+                  <label>To</label>
+                  <input type="date" id="leaveTo" required />
+                </div>
+              </div>
+
+              <div class="field">
+                <label>Reason</label>
+                <textarea id="leaveReason" rows="3" placeholder="Write reason..." required></textarea>
+              </div>
+
+              <button type="submit" id="leaveSubmitBtn" class="btn btn-primary">Submit Request</button>
+            </form>
+
+              <div style="margin-top:20px">
+                <h4 style="margin-bottom:10px;font-size:0.95rem">My Leave History</h4>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Reason</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="leaveHistoryTbody">
+                      <tr>
+                        <td colspan="4" style="text-align:center">Loading...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Complaints -->
+          <div id="complaints" class="page-section span-12" style="display: none;">
+            <section class="card">
+              <div class="card-head">
+                <h3>Submit Complaint</h3>
+                <p class="muted">Report an issue or request to admin</p>
+              </div>
+
+              <form class="form" id="complaintForm" style="margin-bottom: 24px;">
+                <div class="field">
+                  <label>Title</label>
+                  <input type="text" id="complaintTitle" placeholder="Brief summary" required />
+                </div>
+
+                <div class="field">
+                  <label>Description</label>
+                  <textarea id="complaintDesc" rows="4" placeholder="Detail your issue..." required></textarea>
+                </div>
+
+                <button type="submit" id="complaintSubmitBtn" class="btn btn-primary">Submit Complaint</button>
+              </form>
+
+              <div class="card-head">
+                <h4 style="margin-bottom:10px;font-size:0.95rem">My Complaints History</h4>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Description</th>
+                      <th>Status</th>
+                      <th>Admin Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody id="complaintsTbody">
+                    <tr>
+                      <td colspan="4" style="text-align:center">Loading complaints...</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+        </section>
+    </main>
+  </div>
+</body>
+
+</html>

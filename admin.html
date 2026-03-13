@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMS | Admin Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .action-btns {
+            display: flex;
+            gap: 8px;
+        }
+
+        .edit-row {
+            background: rgba(91, 124, 250, 0.1) !important;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            padding: 24px;
+            border-radius: var(--radius);
+            width: 100%;
+            max-width: 500px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div>
+                <div class="brand">
+                    <div class="logo">A</div>
+                    <h2>Admin Panel</h2>
+                </div>
+                <div class="nav" style="margin-top: 20px;">
+                    <a href="#students" class="nav-item active">Students</a>
+                    <a href="#teachers" class="nav-item">Teachers</a>
+                    <a href="#parents" class="nav-item">Parents</a>
+                    <a href="#attendance" class="nav-item">Attendance</a>
+                    <a href="#marks" class="nav-item">Marks</a>
+                    <a href="#leave" class="nav-item">Leave Requests</a>
+                    <a href="#complaints" class="nav-item">Complaints</a>
+                    <a href="#" id="openCreateUserModalBtn" class="nav-item">Create User</a>
+
+                    <!-- Hidden file input for CSV -->
+                    <input type="file" id="csvFileInput" accept=".csv" style="display: none;" />
+                    <a href="#" id="openCsvUploadBtn" class="nav-item">Import Users (CSV)</a>
+                </div>
+            </div>
+            <div class="sidebar-footer">
+                <button id="logoutBtn" class="btn btn-ghost btn-small" style="color: var(--muted);">Logout</button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main">
+            <div class="topbar">
+                <div>
+                    <h1>Manage Content</h1>
+                    <p class="muted">Create, read, update, and delete records.</p>
+                </div>
+                <div class="topbar-actions" style="align-items: center;">
+                    <button id="addStudentBtn" class="btn btn-primary">+ Add New Student</button>
+                    <span class="badge">Role: Admin</span>
+
+                    <!-- Notification Bell -->
+                    <div class="notification-bell" id="notificationBell" style="margin-left: 10px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                        </svg>
+                        <div class="notification-badge" id="notificationBadge">0</div>
+                        
+                        <!-- Notification Panel -->
+                        <div class="notifications-panel" id="notificationsPanel">
+                            <div class="notifications-header">
+                                <span>Notifications</span>
+                                <span class="mark-all-read" id="markAllReadBtn">Mark all as read</span>
+                            </div>
+                            <div class="notifications-content" id="notificationsContent">
+                                <div class="no-notifications">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manage Students Section -->
+            <div id="students" class="grid page-section" style="display: grid;">
+                <div class="card span-12">
+                    <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3>Student List</h3>
+                        <input type="search" id="searchStudents" placeholder="Search students..." style="max-width:300px;">
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Roll No</th>
+                                    <th>Name</th>
+                                    <th>Phone</th>
+                                    <th>DOB</th>
+                                    <th>Gender</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="studentTableBody">
+                                <tr><td colspan="6" style="text-align:center">Loading students...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manage Teachers Section -->
+            <div id="teachers" class="grid page-section" style="display: none; margin-top:0;">
+                <div class="card span-12">
+                    <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3>Teacher List</h3>
+                        <input type="search" id="searchTeachers" placeholder="Search teachers..." style="max-width:300px;">
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Phone</th>
+                                    <th>Department</th>
+                                    <th>Subject</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="teacherTableBody">
+                                <tr><td colspan="5" style="text-align:center">Loading teachers...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manage Parents Section -->
+            <div id="parents" class="grid page-section" style="display: none; margin-top:0;">
+                <div class="card span-12">
+                    <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3>Parent List</h3>
+                        <input type="search" id="searchParents" placeholder="Search parents..." style="max-width:300px;">
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Parent ID</th>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Phone</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="parentTableBody">
+                                <tr><td colspan="5" style="text-align:center">Loading parents...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manage Attendance Section -->
+            <div id="attendance" class="grid page-section" style="display: none; margin-top:0;">
+                <div class="card span-12">
+                    <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3>Attendance Records</h3>
+                        <input type="search" id="searchAttendance" placeholder="Search attendance..." style="max-width:300px;">
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Student</th>
+                                    <th>Date</th>
+                                    <th>Subject</th>
+                                    <th>Status</th>
+                                    <th>Remarks</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="attendanceTableBody">
+                                <tr><td colspan="6" style="text-align:center">Loading attendance...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manage Marks Section -->
+            <div id="marks" class="grid page-section" style="display: none; margin-top:0;">
+                <div class="card span-12">
+                    <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3>Marks Records</h3>
+                        <input type="search" id="searchMarks" placeholder="Search marks..." style="max-width:300px;">
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Student</th>
+                                    <th>Subject</th>
+                                    <th>Exam</th>
+                                    <th>Marks</th>
+                                    <th>Remarks</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="marksTableBody">
+                                <tr><td colspan="6" style="text-align:center">Loading marks...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Leave Requests Section -->
+            <div id="leave" class="grid page-section" style="display: none; margin-top:0;">
+                <div class="card span-12">
+                    <div class="card-head">
+                        <h3>Agreed Leave Requests</h3>
+                        <p class="muted">Requests approved by parents, awaiting admin final decision</p>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Student Name</th>
+                                    <th>From</th>
+                                    <th>To</th>
+                                    <th>Reason</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="leaveTableBody">
+                                <tr>
+                                    <td colspan="6" style="text-align:center">Loading requests...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            <!-- Complaints Section -->
+            <div id="complaints" class="grid page-section" style="display: none; margin-top:0;">
+                <div class="card span-12">
+                    <div class="card-head">
+                        <h3>Student Complaints</h3>
+                        <p class="muted">Review and respond to student issues</p>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Student</th>
+                                    <th>Title</th>
+                                    <th>Description</th>
+                                    <th>Status</th>
+                                    <th>Response</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="complaintsTableBody">
+                                <tr>
+                                    <td colspan="6" style="text-align:center">Loading complaints...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Admin Reason Modal for Complaints -->
+    <div id="complaintResponseModal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-bottom: 16px;">Respond to Complaint</h3>
+            <form id="complaintResponseForm" class="form">
+                <input type="hidden" id="complaintId" />
+                <input type="hidden" id="complaintStatus" />
+                <div class="field">
+                    <label>Reason / Response</label>
+                    <textarea id="crReason" rows="4" required></textarea>
+                </div>
+                <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 16px;">
+                    <button type="button" id="closeComplaintResponseModal" class="btn btn-outline">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Submit Response</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Student Form Modal -->
+    <div id="studentModal" class="modal">
+        <div class="modal-content">
+            <h3 id="modalTitle" style="margin-bottom: 16px;">Add Student</h3>
+            <form id="studentForm" class="form">
+                <input type="hidden" id="editProfileId" />
+                <div class="form-row">
+                    <div class="field">
+                        <label>Name</label>
+                        <input type="text" id="sName" required />
+                    </div>
+                    <div class="field">
+                        <label>Roll Number</label>
+                        <input type="number" id="sRoll" required />
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="field">
+                        <label>Phone</label>
+                        <input type="number" id="sPhone" />
+                    </div>
+                    <div class="field">
+                        <label>Date of Birth</label>
+                        <input type="date" id="sDob" />
+                    </div>
+                </div>
+                <div class="field" style="margin-bottom: 16px;">
+                    <label>Gender</label>
+                    <select id="sGender">
+                        <option value="">Select</option>
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" id="closeModalBtn" class="btn btn-outline">Cancel</button>
+                    <button type="submit" id="saveStudentBtn" class="btn btn-primary">Save Student</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create User Modal -->
+    <div id="createUserModal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-bottom: 16px;">Create New User Account (Auth)</h3>
+            <p class="muted small-note" style="margin-bottom: 16px;">This creates real login credentials for a new user.
+            </p>
+            <form id="createUserForm" class="form">
+                <div class="form-row">
+                    <div class="field">
+                        <label>Full Name</label>
+                        <input type="text" id="cuName" required />
+                    </div>
+                    <div class="field">
+                        <label>Email Address</label>
+                        <input type="email" id="cuEmail" required />
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="field">
+                        <label>Password</label>
+                        <input type="text" id="cuPassword" required minlength="6" />
+                    </div>
+                    <div class="field">
+                        <label>Role</label>
+                        <select id="cuRole" required>
+                            <option value="">Select Role</option>
+                            <option value="student">Student</option>
+                            <option value="teacher">Teacher</option>
+                            <option value="parent">Parent</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Teacher and Student Fields -->
+                <div id="schoolFields" style="display: none;">
+                    <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);" />
+                    <p class="muted small-note" style="margin-bottom: 12px;">School Information</p>
+                    <div class="form-row" style="margin-bottom: 16px;">
+                        <div class="field">
+                            <label>Program / Department</label>
+                            <select id="cuProgram">
+                                <option value="">Select Department</option>
+                                <option value="csit">CSIT</option>
+                                <option value="bba">BBA</option>
+                                <option value="bit">BIT</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label>Phone Number</label>
+                            <input type="number" id="cuPhone" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Student Only Fields -->
+                <div id="parentFields" style="display: none;">
+                    <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);" />
+                    <p class="muted small-note" style="margin-bottom: 12px;">Parent Information (Optional)</p>
+                    <div class="form-row">
+                        <div class="field">
+                            <label>Parent Name</label>
+                            <input type="text" id="cuParentName" placeholder="e.g. Jane Doe" />
+                        </div>
+                        <div class="field">
+                            <label>Parent Email</label>
+                            <input type="email" id="cuParentEmail" placeholder="e.g. jane@example.com" />
+                        </div>
+                    </div>
+                    <div class="form-row" style="margin-bottom: 16px;">
+                        <div class="field">
+                            <label>Parent Phone</label>
+                            <input type="number" id="cuParentPhone" />
+                        </div>
+                        <div class="field"></div>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" id="closeCreateUserModalBtn" class="btn btn-outline">Cancel</button>
+                    <button type="submit" id="submitCreateUserBtn" class="btn btn-primary">Create User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module">
+        import { checkSession, signOut } from './auth.js'
+        import { supabase } from './supabase.js'
+
+        let currentAdminId = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            // ── Navigation Logic ──────────────────────────────────────────
+            const navItems = document.querySelectorAll('.nav-item')
+            const sections = document.querySelectorAll('.page-section')
+            
+            navItems.forEach(item => {
+                item.addEventListener('click', (e) => {
+                    const href = item.getAttribute('href')
+                    if (href && href.startsWith('#') && href.length > 1) {
+                        e.preventDefault()
+                        const targetId = href.substring(1)
+                        
+                        navItems.forEach(nav => {
+                          if(nav.getAttribute('href').startsWith('#') && nav.getAttribute('href').length > 1) {
+                            nav.classList.remove('active')
+                          }
+                        })
+                        item.classList.add('active')
+                        
+                        sections.forEach(sec => {
+                            if (sec.id === targetId) {
+                                sec.style.display = 'block'
+                            } else {
+                                sec.style.display = 'none'
+                            }
+                        })
+                    }
+                })
+            })
+
+            const session = await checkSession()
+            if (session && session.user) {
+                currentAdminId = session.user.id;
+                loadNotifications()
+                setupRealtimeSubscription()
+                fetchComplaints()
+            }
+
+            document.getElementById('logoutBtn').addEventListener('click', signOut)
+
+            const studentTableBody = document.getElementById('studentTableBody')
+            const leaveTableBody = document.getElementById('leaveTableBody')
+            const modal = document.getElementById('studentModal')
+            const form = document.getElementById('studentForm')
+
+            const createUserModal = document.getElementById('createUserModal')
+            const createUserForm = document.getElementById('createUserForm')
+
+            // Load Students
+            async function loadStudents() {
+                studentTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center">Loading...</td></tr>'
+                const { data, error } = await supabase.from('student').select('*').order('roll_number')
+
+                if (error) {
+                    studentTableBody.innerHTML = `<tr><td colspan="6" class="error-text">Error: ${error.message}</td></tr>`
+                    return
+                }
+
+                if (!data || data.length === 0) {
+                    studentTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center">No students found.</td></tr>'
+                    return
+                }
+
+                studentTableBody.innerHTML = ''
+                data.forEach((student, index) => {
+                    const tr = document.createElement('tr')
+                    tr.innerHTML = `
+                        <td>${student.roll_number || '-'}</td>
+                        <td>${student.name || '-'}</td>
+                        <td>${student.phone_num || '-'}</td>
+                        <td>${student.date_of_birth || '-'}</td>
+                        <td>${student.gender || '-'}</td>
+                        <td class="action-btns">
+                            <button class="btn btn-small btn-outline edit-btn" data-index="${index}">Edit</button>
+                            <button class="btn btn-small btn-outline del-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3)" data-index="${index}">Delete</button>
+                        </td>
+                    `
+                    studentTableBody.appendChild(tr)
+                })
+
+                // Attach event listeners to new buttons
+                document.querySelectorAll('.edit-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => openEditModal(e.target.dataset.index, data))
+                })
+                document.querySelectorAll('.del-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => deleteStudent(e.target.dataset.index, data))
+                })
+            }
+
+            // Student Search
+            document.getElementById('searchStudents').addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase()
+                const rows = studentTableBody.querySelectorAll('tr')
+                rows.forEach(row => {
+                    row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none'
+                })
+            })
+
+            // ── Load Teachers ──────────────────────────────────────────────
+            const teacherTableBody = document.getElementById('teacherTableBody')
+            async function loadTeachers() {
+                teacherTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center">Loading...</td></tr>'
+                const { data, error } = await supabase.from('teacher').select('*')
+                if (error) {
+                    teacherTableBody.innerHTML = `<tr><td colspan="5" class="error-text">Error: ${error.message}</td></tr>`
+                    return
+                }
+                if (!data || data.length === 0) {
+                    teacherTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center">No teachers found.</td></tr>'
+                    return
+                }
+                teacherTableBody.innerHTML = data.map(t => `
+                    <tr>
+                        <td title="${t.teacher_id}">${(t.teacher_id || '').substring(0,8)}...</td>
+                        <td>${t.phone_number || '-'}</td>
+                        <td>${(t.department || '-').toUpperCase()}</td>
+                        <td>${t.subject || '-'}</td>
+                        <td><span class="muted">Read Only</span></td>
+                    </tr>
+                `).join('')
+            }
+            document.getElementById('searchTeachers').addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase()
+                teacherTableBody.querySelectorAll('tr').forEach(row => {
+                    row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none'
+                })
+            })
+
+            // ── Load Parents ──────────────────────────────────────────────
+            const parentTableBody = document.getElementById('parentTableBody')
+            async function loadParents() {
+                parentTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center">Loading...</td></tr>'
+                
+                // Fetch profiles where role='parent' from profiles view, or raw auth if exposed. 
+                // Since this uses custom auth/RPC, we depend on what's visible. 
+                // We'll just fetch from student "parents" data if a specific parent table doesn't exist.
+                // Assuming you have parents in some table or just auth. We'll show a generic placeholder if no raw table exists.
+                parentTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center" class="muted">Parent details are stored in auth. Search by parent ID if implemented.</td></tr>'
+            }
+            document.getElementById('searchParents').addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase()
+                parentTableBody.querySelectorAll('tr').forEach(row => {
+                    row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none'
+                })
+            })
+
+            // ── Load Attendance ────────────────────────────────────────────
+            const attendanceTableBody = document.getElementById('attendanceTableBody')
+            async function loadAttendance() {
+                attendanceTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center">Loading...</td></tr>'
+                const { data, error } = await supabase.from('attendance')
+                    .select('id, date, subject, status, remarks, student:student_id(name)')
+                    .order('date', {ascending: false})
+                    .limit(50)
+                if (error) {
+                    attendanceTableBody.innerHTML = `<tr><td colspan="6" class="error-text">Error: ${error.message}</td></tr>`
+                    return
+                }
+                if (!data || data.length === 0) {
+                    attendanceTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center">No attendance found.</td></tr>'
+                    return
+                }
+                attendanceTableBody.innerHTML = data.map(a => `
+                    <tr>
+                        <td>${a.student ? a.student.name : 'Unknown'}</td>
+                        <td>${a.date}</td>
+                        <td>${a.subject || '-'}</td>
+                        <td>${a.status}</td>
+                        <td>${a.remarks || '-'}</td>
+                        <td><button class="btn btn-small btn-outline del-att-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3)" data-id="${a.id}">Delete</button></td>
+                    </tr>
+                `).join('')
+
+                document.querySelectorAll('.del-att-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+                    if(!confirm('Delete this attendance record?')) return
+                    const { error } = await supabase.from('attendance').delete().eq('id', e.target.dataset.id)
+                    if(!error) loadAttendance()
+                }))
+            }
+            document.getElementById('searchAttendance').addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase()
+                attendanceTableBody.querySelectorAll('tr').forEach(row => {
+                    row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none'
+                })
+            })
+
+            // ── Load Marks ──────────────────────────────────────────────────
+            const marksTableBody = document.getElementById('marksTableBody')
+            async function loadMarks() {
+                marksTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center">Loading...</td></tr>'
+                const { data, error } = await supabase.from('marks')
+                    .select('marks_id, subject, exam, marks, remarks, student:student_id(name)')
+                    .order('marks_id', {ascending: false})
+                    .limit(50)
+                if (error) {
+                    marksTableBody.innerHTML = `<tr><td colspan="6" class="error-text">Error: ${error.message}</td></tr>`
+                    return
+                }
+                if (!data || data.length === 0) {
+                    marksTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center">No marks found.</td></tr>'
+                    return
+                }
+                marksTableBody.innerHTML = data.map(m => `
+                    <tr>
+                        <td>${m.student ? m.student.name : 'Unknown'}</td>
+                        <td>${m.subject || '-'}</td>
+                        <td>${m.exam}</td>
+                        <td>${m.marks}</td>
+                        <td>${m.remarks || '-'}</td>
+                        <td><button class="btn btn-small btn-outline del-marks-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3)" data-id="${m.marks_id}">Delete</button></td>
+                    </tr>
+                `).join('')
+
+                document.querySelectorAll('.del-marks-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+                    if(!confirm('Delete this marks record?')) return
+                    const { error } = await supabase.from('marks').delete().eq('marks_id', e.target.dataset.id)
+                    if(!error) loadMarks()
+                }))
+            }
+            document.getElementById('searchMarks').addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase()
+                marksTableBody.querySelectorAll('tr').forEach(row => {
+                    row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none'
+                })
+            })
+
+            // Modal Logic
+            document.getElementById('addStudentBtn').addEventListener('click', () => {
+                form.reset()
+                document.getElementById('editProfileId').value = ''
+                document.getElementById('modalTitle').textContent = 'Add Student'
+                modal.classList.add('active')
+            })
+
+            document.getElementById('closeModalBtn').addEventListener('click', () => {
+                modal.classList.remove('active')
+            })
+
+            function openEditModal(index, allData) {
+                const student = allData[index]
+                if (!student) return
+
+                // Fallback gracefully across missing fields
+                document.getElementById('editProfileId').value = student.profile_id || student.id || ''
+                document.getElementById('sName').value = student.name || ''
+                document.getElementById('sRoll').value = student.roll_number || ''
+                document.getElementById('sPhone').value = student.phone_num || ''
+                document.getElementById('sDob').value = student.date_of_birth || ''
+                document.getElementById('sGender').value = student.gender || ''
+
+                document.getElementById('modalTitle').textContent = 'Edit Student'
+                modal.classList.add('active')
+            }
+
+            // Save / Create Student
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault()
+                const saveBtn = document.getElementById('saveStudentBtn')
+                saveBtn.disabled = true
+                saveBtn.textContent = 'Saving...'
+
+                const profileId = document.getElementById('editProfileId').value
+
+                const payload = {
+                    name: document.getElementById('sName').value,
+                    roll_number: document.getElementById('sRoll').value,
+                    phone_num: document.getElementById('sPhone').value || null,
+                    date_of_birth: document.getElementById('sDob').value || null,
+                    gender: document.getElementById('sGender').value || null
+                }
+
+                try {
+                    let error;
+                    if (profileId) {
+                        // Update
+                        const res = await supabase.from('student').update(payload).eq('profile_id', profileId)
+                        error = res.error
+                    } else {
+                        // Create (Note: if profile_id is required via foreign key to auth.users, this might fail unless handled)
+                        // Using a dummy UUID or letting DB generate if not strict, but usually it links to auth setup.
+                        // Assuming profile_id can be auto-generated or left blank if not strict FK.
+                        payload.profile_id = crypto.randomUUID() // fallback if no auth tie
+                        const res = await supabase.from('student').insert([payload])
+                        error = res.error
+                    }
+
+                    if (error) throw error
+
+                    modal.classList.remove('active')
+                    loadStudents()
+                } catch (err) {
+                    alert('Error saving student: ' + err.message)
+                } finally {
+                    saveBtn.disabled = false
+                    saveBtn.textContent = 'Save Student'
+                }
+            })
+
+            // Delete Student
+            async function deleteStudent(index, allData) {
+                const student = allData[index]
+                if (!student) return
+
+                const uniqueId = student.profile_id || student.id
+                if (!uniqueId) {
+                    alert("Cannot delete: student has no ID.")
+                    return
+                }
+
+                if (!confirm('Are you sure you want to delete this student (' + (student.name || 'unnamed') + ')?')) return
+
+                try {
+                    // Try deleting by profile_id first, then id
+                    const matchCol = student.profile_id ? 'profile_id' : 'id'
+                    const { error } = await supabase.from('student').delete().eq(matchCol, uniqueId)
+                    if (error) throw error
+                    loadStudents()
+                } catch (err) {
+                    alert('Error deleting student: ' + err.message)
+                }
+            }
+
+            // Create User Logic
+            const cuRoleSelect = document.getElementById('cuRole')
+            const schoolFields = document.getElementById('schoolFields')
+            const parentFields = document.getElementById('parentFields')
+
+            // Toggle visibility based on role
+            cuRoleSelect.addEventListener('change', (e) => {
+                const role = e.target.value
+                if (role === 'admin') {
+                    schoolFields.style.display = 'none'
+                    parentFields.style.display = 'none'
+                } else if (role === 'teacher') {
+                    schoolFields.style.display = 'block'
+                    parentFields.style.display = 'none'
+                } else if (role === 'student') {
+                    schoolFields.style.display = 'block'
+                    parentFields.style.display = 'block'
+                } else {
+                    schoolFields.style.display = 'none'
+                    parentFields.style.display = 'none'
+                }
+            })
+
+            document.getElementById('openCreateUserModalBtn').addEventListener('click', (e) => {
+                e.preventDefault()
+                createUserForm.reset()
+                schoolFields.style.display = 'none'
+                parentFields.style.display = 'none'
+                createUserModal.classList.add('active')
+            })
+
+            document.getElementById('closeCreateUserModalBtn').addEventListener('click', () => {
+                createUserModal.classList.remove('active')
+            })
+
+            createUserForm.addEventListener('submit', async (e) => {
+                e.preventDefault()
+                const submitBtn = document.getElementById('submitCreateUserBtn')
+                const originalText = submitBtn.textContent
+                submitBtn.disabled = true
+                submitBtn.textContent = 'Creating User...'
+
+                const payload = {
+                    p_name: document.getElementById('cuName').value,
+                    p_email: document.getElementById('cuEmail').value,
+                    p_password: document.getElementById('cuPassword').value,
+                    p_role: document.getElementById('cuRole').value,
+                    p_program: document.getElementById('cuProgram').value || null,
+                    p_phone: parseInt(document.getElementById('cuPhone').value) || null,
+                    p_parent_name: document.getElementById('cuParentName').value || null,
+                    p_parent_email: document.getElementById('cuParentEmail').value || null,
+                    p_parent_phone: parseInt(document.getElementById('cuParentPhone').value) || null
+                }
+
+                try {
+                    const { data, error } = await supabase.rpc('create_user_account', payload)
+
+                    if (error) {
+                        console.error("RPC Error:", error)
+                        throw new Error(error.message || 'Failed to create user. Ensure the RPC function exists in Supabase.')
+                    }
+
+                    alert('User created successfully! They can now log in.')
+                    createUserModal.classList.remove('active')
+                } catch (err) {
+                    alert(err.message)
+                } finally {
+                    submitBtn.disabled = false
+                    submitBtn.textContent = originalText
+                }
+            })
+
+            // CSV Upload Logic
+            const csvFileInput = document.getElementById('csvFileInput')
+            document.getElementById('openCsvUploadBtn').addEventListener('click', (e) => {
+                e.preventDefault()
+                csvFileInput.click() // trigger the file selector
+            })
+
+            csvFileInput.addEventListener('change', async (e) => {
+                const file = e.target.files[0]
+                if (!file) return
+
+                const reader = new FileReader()
+                reader.onload = async (event) => {
+                    const text = event.target.result
+                    const rows = text.split('\n').map(row => row.trim()).filter(row => row)
+
+                    if (rows.length < 2) {
+                        alert('CSV file is empty or only contains headers.')
+                        csvFileInput.value = ''
+                        return
+                    }
+
+                    // Confirm before starting import
+                    if (!confirm(`Found ${rows.length - 1} rows in CSV (assuming 1 header row). Do you want to process them?`)) {
+                        csvFileInput.value = ''
+                        return
+                    }
+
+                    let successCount = 0
+                    let errCount = 0
+                    let errMessages = []
+
+                    // Start from 1 to skip the header (user_name, user_email, etc.)
+                    for (let i = 1; i < rows.length; i++) {
+                        // Simple split, assuming no commas inside the actual data values
+                        const cols = rows[i].split(',').map(c => c.trim())
+
+                        if (cols.length < 3) {
+                            errCount++
+                            errMessages.push(`Row ${i + 1}: Missing core columns. Found ${cols.length}, expected at least 3.`)
+                            continue
+                        }
+
+                        // Order: user_name[0], user_email[1], user_password[2], user_role[3], user_program[4], user_phone[5], parent_name[6], parent_email[7], parent_phone[8]
+                        const payload = {
+                            p_name: cols[0],
+                            p_email: cols[1],
+                            p_password: cols[2],
+                            p_role: (cols[3] || 'student').toLowerCase(),
+                            p_program: cols[4] || null,
+                            p_phone: parseInt(cols[5]) || null,
+                            p_parent_name: cols[6] || null,
+                            p_parent_email: cols[7] || null,
+                            p_parent_phone: parseInt(cols[8]) || null
+                        }
+
+                        try {
+                            const { error } = await supabase.rpc('create_user_account', payload)
+                            if (error) {
+                                errCount++
+                                errMessages.push(`Row ${i + 1} (${cols[1]}): ${error.message}`)
+                            } else {
+                                successCount++
+                            }
+                        } catch (err) {
+                            errCount++
+                            errMessages.push(`Row ${i + 1} (${cols[1]}): ${err.message}`)
+                        }
+                    }
+
+                    // Summary
+                    let summary = `Import Complete!\n\nSuccessfully created: ${successCount}\nErrors: ${errCount}`
+                    if (errCount > 0 && errMessages.length > 0) {
+                        summary += `\n\nFirst few errors:\n${errMessages.slice(0, 3).join('\n')}`
+                        if (errMessages.length > 3) summary += '\n...'
+                    }
+                    alert(summary)
+
+                    csvFileInput.value = '' // Reset input
+                    loadStudents() // Refresh list if we imported students
+                }
+                reader.readAsText(file)
+            })
+
+            // ── Load Agreed Leave Requests ──────────────────────────────────
+            async function fetchAgreedLeaveRequests() {
+                try {
+                    // Fetch leave requests where status is 'agreed'
+                    const { data: requests, error } = await supabase
+                        .from('leave_request')
+                        .select('*, student:requester_id (name)')
+                        .eq('status', 'agreed')
+                        .order('start_date', { ascending: false })
+
+                    if (error) throw error
+
+                    renderLeaveRequests(requests)
+                } catch (err) {
+                    console.error('Error fetching leave requests:', err)
+                    leaveTableBody.innerHTML = `<tr><td colspan="6" style="color:red;text-align:center">Failed to load requests</td></tr>`
+                }
+            }
+
+            function renderLeaveRequests(requests) {
+                leaveTableBody.innerHTML = ''
+                if (!requests || requests.length === 0) {
+                    leaveTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center">No pending leave requests.</td></tr>'
+                    return
+                }
+
+                requests.forEach(req => {
+                    const tr = document.createElement('tr')
+                    tr.innerHTML = `
+                        <td>${req.student ? req.student.name : 'Unknown'}</td>
+                        <td>${req.start_date}</td>
+                        <td>${req.end_date}</td>
+                        <td>${req.reason}</td>
+                        <td><span class="pill warn">Agreed by Parent</span></td>
+                        <td class="actions">
+                            <button class="btn btn-small btn-primary admin-approve-btn" data-id="${req.id}">Approve</button>
+                            <button class="btn btn-small btn-outline admin-reject-btn" data-id="${req.id}">Reject</button>
+                        </td>
+                    `
+                    leaveTableBody.appendChild(tr)
+                })
+
+                document.querySelectorAll('.admin-approve-btn').forEach(btn => btn.addEventListener('click', () => updateLeaveStatus(btn.dataset.id, 'approved')))
+                document.querySelectorAll('.admin-reject-btn').forEach(btn => btn.addEventListener('click', () => rejectLeaveRequest(btn.dataset.id)))
+            }
+
+            async function rejectLeaveRequest(id) {
+                if (!confirm('Are you sure you want to reject and delete this leave request?')) return
+                try {
+                    // get student to notify
+                    const { data: requestData } = await supabase.from('leave_request').select('requester_id').eq('id', id).single()
+
+                    const { error } = await supabase
+                        .from('leave_request')
+                        .delete()
+                        .eq('id', id)
+
+                    if (error) throw error
+
+                    if (requestData) {
+                        await supabase.from('notifications').insert([{
+                            user_role: 'student',
+                            target_user_id: requestData.requester_id,
+                            title: 'Leave Request Rejected by Admin',
+                            message: `Your leave request flow was ultimately rejected and removed by the admin.`
+                        }]);
+                    }
+
+                    alert('Request rejected and removed successfully.')
+                    fetchAgreedLeaveRequests() // refresh list
+                } catch (err) {
+                    alert('Error rejecting leave request: ' + err.message)
+                }
+            }
+
+            async function updateLeaveStatus(id, newStatus) {
+                try {
+                    const { data: requestData } = await supabase.from('leave_request').select('requester_id').eq('id', id).single()
+
+                    const { error } = await supabase
+                        .from('leave_request')
+                        .update({ status: newStatus, approved_by: currentAdminId })
+                        .eq('id', id)
+
+                    if (error) throw error
+
+                    if (requestData) {
+                        await supabase.from('notifications').insert([{
+                            user_role: 'student',
+                            target_user_id: requestData.requester_id,
+                            title: 'Leave Request Approved',
+                            message: `Your leave request has been officially approved by the admin.`
+                        }]);
+                    }
+
+                    alert(`Request ${newStatus} successfully.`)
+                    fetchAgreedLeaveRequests() // refresh list
+                } catch (err) {
+                    alert('Error updating leave request: ' + err.message)
+                }
+            }
+
+            // ── Load Complaints ──────────────────────────────────────────────
+            const complaintsTableBody = document.getElementById('complaintsTableBody')
+            const complaintResponseModal = document.getElementById('complaintResponseModal')
+            const complaintResponseForm = document.getElementById('complaintResponseForm')
+
+            async function fetchComplaints() {
+                try {
+                    const { data: complaints, error } = await supabase
+                        .from('complaints')
+                        .select('*, student:student_id (name)')
+                        .order('created_at', { ascending: false })
+
+                    if (error) throw error
+
+                    complaintsTableBody.innerHTML = ''
+                    if (!complaints || complaints.length === 0) {
+                        complaintsTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center">No complaints submitted.</td></tr>'
+                        return
+                    }
+
+                    const pillClass = { pending: 'warn', acknowledged: 'good', rejected: 'ok' }
+
+                    complaints.forEach(c => {
+                        const tr = document.createElement('tr')
+                        tr.innerHTML = `
+                            <td>${c.student ? c.student.name : 'Unknown'}</td>
+                            <td>${c.title}</td>
+                            <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${c.description}">${c.description}</td>
+                            <td><span class="pill ${pillClass[c.status] || ''}">${c.status}</span></td>
+                            <td>${c.admin_reason || '-'}</td>
+                            <td class="actions">
+                                ${c.status === 'pending' ? `
+                                    <button class="btn btn-small btn-primary ack-complaint-btn" data-id="${c.id}">Acknowledge</button>
+                                    <button class="btn btn-small btn-outline rej-complaint-btn" data-id="${c.id}">Reject</button>
+                                ` : '<span class="muted">Processed</span>'}
+                            </td>
+                        `
+                        complaintsTableBody.appendChild(tr)
+                    })
+
+                    document.querySelectorAll('.ack-complaint-btn').forEach(btn => btn.addEventListener('click', () => openComplaintModal(btn.dataset.id, 'acknowledged')))
+                    document.querySelectorAll('.rej-complaint-btn').forEach(btn => btn.addEventListener('click', () => openComplaintModal(btn.dataset.id, 'rejected')))
+                } catch (err) {
+                    console.error('Error fetching complaints:', err)
+                    complaintsTableBody.innerHTML = `<tr><td colspan="6" style="color:red;text-align:center">Failed to load complaints</td></tr>`
+                }
+            }
+
+            function openComplaintModal(id, status) {
+                document.getElementById('complaintId').value = id
+                document.getElementById('complaintStatus').value = status
+                document.getElementById('crReason').value = ''
+                complaintResponseModal.classList.add('active')
+            }
+
+            document.getElementById('closeComplaintResponseModal').addEventListener('click', () => {
+                complaintResponseModal.classList.remove('active')
+            })
+
+            complaintResponseForm.addEventListener('submit', async (e) => {
+                e.preventDefault()
+                const id = document.getElementById('complaintId').value
+                const status = document.getElementById('complaintStatus').value
+                const reason = document.getElementById('crReason').value
+
+                try {
+                    const { data: cData } = await supabase.from('complaints').select('student_id').eq('id', id).single()
+
+                    const { error } = await supabase
+                        .from('complaints')
+                        .update({ status: status, admin_reason: reason })
+                        .eq('id', id)
+
+                    if (error) throw error
+
+                    if (cData) {
+                        await supabase.from('notifications').insert([{
+                            user_role: 'student',
+                            target_user_id: cData.student_id,
+                            title: `Complaint ${status}`,
+                            message: `Admin responded to your complaint: ${reason}`
+                        }]);
+                    }
+
+                    alert(`Complaint marked as ${status}.`)
+                    complaintResponseModal.classList.remove('active')
+                    fetchComplaints()
+                } catch (err) {
+                    alert('Error updating complaint: ' + err.message)
+                }
+            })
+
+            // ── Notifications Logic ──────────────────────────────────────────
+            async function loadNotifications() {
+               const panel = document.getElementById('notificationsContent')
+               const badge = document.getElementById('notificationBadge')
+               
+               // admins generally see target_user_id null notifications or their specific ones
+               try {
+                  const { data, error } = await supabase.from('notifications')
+                     .select('*')
+                     .or(`target_user_id.eq.${currentAdminId},target_user_id.is.null`)
+                     .eq('user_role', 'admin')
+                     .order('created_at', { ascending: false })
+                     .limit(20)
+
+                  if (error) throw error
+
+                  const unreadCount = data ? data.filter(n => !n.is_read).length : 0
+                  if (unreadCount > 0) {
+                    badge.textContent = unreadCount
+                    badge.style.display = 'flex'
+                  } else {
+                    badge.style.display = 'none'
+                  }
+
+                  if (!data || data.length === 0) {
+                     panel.innerHTML = '<div class="no-notifications">No notifications yet.</div>'
+                     return
+                  }
+
+                  panel.innerHTML = data.map(n => `
+                    <div class="notification-item ${n.is_read ? '' : 'unread'}" data-id="${n.id}">
+                       <div class="notification-title">${n.title}</div>
+                       <div class="notification-message">${n.message}</div>
+                       <div class="notification-time">${new Date(n.created_at).toLocaleString()}</div>
+                    </div>
+                  `).join('')
+
+                  // Add click to mark as read
+                  document.querySelectorAll('.notification-item.unread').forEach(item => {
+                     item.addEventListener('click', async (e) => {
+                        const id = e.currentTarget.dataset.id
+                        await supabase.from('notifications').update({is_read: true}).eq('id', id)
+                        loadNotifications() // refresh
+                     })
+                  })
+
+               } catch (err) {
+                  console.error('Error loading notifications:', err)
+               }
+            }
+
+            document.addEventListener('DOMContentLoaded', () => {
+               const notifBell = document.getElementById('notificationBell')
+               const notifPanel = document.getElementById('notificationsPanel')
+               const markAllRead = document.getElementById('markAllReadBtn')
+
+               if (notifBell) {
+                 notifBell.addEventListener('click', (e) => {
+                   e.stopPropagation()
+                   notifPanel.classList.toggle('active')
+                 })
+               }
+
+               if (markAllRead) {
+                 markAllRead.addEventListener('click', async (e) => {
+                   e.stopPropagation()
+                   await supabase.from('notifications').update({is_read: true}).or(`target_user_id.eq.${currentAdminId},target_user_id.is.null`).eq('user_role', 'admin').eq('is_read', false)
+                   loadNotifications()
+                 })
+               }
+
+               window.addEventListener('click', () => {
+                  if(notifPanel && notifPanel.classList.contains('active')) {
+                     notifPanel.classList.remove('active')
+                  }
+               })
+
+               if (notifPanel) {
+                 notifPanel.addEventListener('click', e => e.stopPropagation())
+               }
+            })
+
+            // ── Realtime Subscription ──────────────────────────────────────────
+            function setupRealtimeSubscription() {
+               supabase.channel('admin-dashboard-channel')
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_request' }, payload => {
+                     console.log('Leave Request Change received!', payload)
+                     fetchAgreedLeaveRequests()
+                  })
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'complaints' }, payload => {
+                     console.log('Complaint Change received!', payload)
+                     fetchComplaints()
+                  })
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, payload => {
+                     console.log('Notification Change received!', payload)
+                     loadNotifications()
+                  })
+                  .subscribe((status) => {
+                     console.log('Realtime subscription status:', status)
+                  })
+            }
+
+            // Initial load
+            loadStudents()
+            loadTeachers()
+            loadParents()
+            loadAttendance()
+            loadMarks()
+            fetchAgreedLeaveRequests()
+        })
+    </script>
+</body>
+
+</html>
