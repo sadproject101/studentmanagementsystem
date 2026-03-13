@@ -74,12 +74,7 @@
         <!-- Main Content -->
         <main class="main">
             <div class="topbar">
-                <div>
-                    <h1>Manage Content</h1>
-                    <p class="muted">Create, read, update, and delete records.</p>
-                </div>
                 <div class="topbar-actions" style="align-items: center;">
-                    <button id="addStudentBtn" class="btn btn-primary">+ Add New Student</button>
                     <span class="badge">Role: Admin</span>
 
                     <!-- Notification Bell -->
@@ -676,13 +671,6 @@
             })
 
             // Modal Logic
-            document.getElementById('addStudentBtn').addEventListener('click', () => {
-                form.reset()
-                document.getElementById('editProfileId').value = ''
-                document.getElementById('modalTitle').textContent = 'Add Student'
-                modal.classList.add('active')
-            })
-
             document.getElementById('closeModalBtn').addEventListener('click', () => {
                 modal.classList.remove('active')
             })
