@@ -25,6 +25,7 @@
         <a class="nav-item" href="#marks">View Recent Marks</a>
         <a class="nav-item" href="#leave">Request Leave</a>
         <a class="nav-item" href="#complaints">Complaints</a>
+        <a class="nav-item" href="#vote">Vote</a>
       </nav>
 
       <div class="sidebar-footer">
@@ -48,6 +49,7 @@
           loadMarks()
           loadComplaints()
           loadNotifications()
+          loadVotingPolls()
           setupRealtimeSubscription()
         }
       }).catch(err => {
@@ -496,9 +498,210 @@
                console.log('Notification Change received!', payload)
                loadNotifications()
             })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'poll_votes' }, payload => {
+               console.log('Poll vote received!', payload)
+               // Refresh voting polls to show updated counts
+               loadVotingPolls()
+            })
             .subscribe((status) => {
                console.log('Realtime subscription status:', status)
             })
+      }
+
+      // ── Voting / Polls Logic ──────────────────────────────────────
+      async function loadVotingPolls() {
+        const container = document.getElementById('votingPollsContainer')
+        if (!container || !currentUserId) return
+        container.innerHTML = '<p class="muted" style="text-align:center;padding:24px;">Loading polls...</p>'
+
+        try {
+          // Fetch all open polls
+          const { data: polls, error: pollsErr } = await supabase
+            .from('polls')
+            .select('id, title, description, status')
+            .eq('status', 'open')
+            .order('created_at', { ascending: false })
+          if (pollsErr) throw pollsErr
+
+          if (!polls || polls.length === 0) {
+            container.innerHTML = '<p class="muted" style="text-align:center;padding:32px;">No open polls at the moment. Check back later!</p>'
+            return
+          }
+
+          // Check which polls the current user has already voted on
+          const { data: myVotes } = await supabase
+            .from('poll_votes')
+            .select('poll_id, option_id')
+            .eq('voter_id', currentUserId)
+
+          const myVoteMap = {}
+          if (myVotes) myVotes.forEach(v => { myVoteMap[v.poll_id] = v.option_id })
+
+          // Fetch options for all polls
+          const pollIds = polls.map(p => p.id)
+          const { data: allOptions } = await supabase
+            .from('poll_options')
+            .select('id, poll_id, label')
+            .in('poll_id', pollIds)
+
+          const optionsByPoll = {}
+          if (allOptions) allOptions.forEach(opt => {
+            if (!optionsByPoll[opt.poll_id]) optionsByPoll[opt.poll_id] = []
+            optionsByPoll[opt.poll_id].push(opt)
+          })
+
+          container.innerHTML = ''
+          for (const poll of polls) {
+            const options = optionsByPoll[poll.id] || []
+            const alreadyVotedOptionId = myVoteMap[poll.id] || null
+            const card = document.createElement('div')
+            card.className = 'poll-card'
+            card.dataset.pollId = poll.id
+            card.innerHTML = renderPollCard(poll, options, alreadyVotedOptionId)
+            container.appendChild(card)
+          }
+
+          // Bind vote buttons
+          bindVoteButtons()
+
+        } catch (err) {
+          container.innerHTML = `<p style="color:#ff5b5b;text-align:center;padding:24px;">Error loading polls: ${err.message}</p>`
+        }
+      }
+
+      function renderPollCard(poll, options, alreadyVotedOptionId) {
+        const hasVoted = !!alreadyVotedOptionId
+        const titleHtml = `
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+            <h4 style="margin:0;font-size:1.05rem;">${poll.title}</h4>
+            <span class="poll-status-badge open">🟢 Open</span>
+          </div>
+          ${poll.description ? `<p class="muted" style="font-size:0.88rem;margin-bottom:16px;">${poll.description}</p>` : '<div style="margin-bottom:12px;"></div>'}`
+
+        if (hasVoted) {
+          // Show results view
+          return titleHtml + renderResultBars(options, [], alreadyVotedOptionId, true) + '<p class="muted" style="font-size:0.82rem;margin-top:12px;">✅ You have already voted in this poll.</p>'
+        }
+
+        // Show voting options
+        const optionsHtml = options.map(opt => `
+          <button class="vote-option-btn" data-poll-id="${poll.id}" data-option-id="${opt.id}">
+            ${opt.label}
+          </button>`).join('')
+
+        return titleHtml + `<div class="vote-options-wrap">${optionsHtml}</div>`
+      }
+
+      function renderResultBars(options, votes, highlightOptionId, showLoadingSpinner) {
+        // Calculate counts from votes array
+        const votesPerOption = {}
+        if (votes) votes.forEach(v => { votesPerOption[v.option_id] = (votesPerOption[v.option_id] || 0) + 1 })
+        const totalVotes = votes ? votes.length : 0
+
+        if (showLoadingSpinner && votes.length === 0) {
+          // We'll load fresh vote data via the async flow — return placeholder
+          return '<p class="muted" style="font-size:0.85rem;">Loading results...</p>'
+        }
+
+        return options.map(opt => {
+          const count = votesPerOption[opt.id] || 0
+          const pct = totalVotes === 0 ? 0 : Math.round((count / totalVotes) * 100)
+          const isChosen = opt.id === highlightOptionId
+          return `
+            <div class="result-bar-wrap ${isChosen ? 'my-vote' : ''}">
+              <div class="result-label">
+                <span>${opt.label}${isChosen ? ' ✓' : ''}</span>
+                <span>${count} vote${count !== 1 ? 's' : ''} (${pct}%)</span>
+              </div>
+              <div class="result-bar-track">
+                <div class="result-bar" style="width:${pct}%"></div>
+              </div>
+            </div>`
+        }).join('')
+      }
+
+      function bindVoteButtons() {
+        document.querySelectorAll('.vote-option-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const pollId = btn.dataset.pollId
+            const optionId = btn.dataset.optionId
+            // Disable all buttons for this poll to prevent double clicks
+            const card = document.querySelector(`.poll-card[data-poll-id="${pollId}"]`)
+            if (card) card.querySelectorAll('.vote-option-btn').forEach(b => b.disabled = true)
+            await castVote(pollId, optionId)
+          })
+        })
+      }
+
+      async function castVote(pollId, optionId) {
+        try {
+          const { error } = await supabase.from('poll_votes').insert([{
+            poll_id: pollId,
+            option_id: optionId,
+            voter_id: currentUserId
+          }])
+
+          if (error) {
+            // If UNIQUE constraint violated, already voted
+            if (error.code === '23505') {
+              alert('You have already voted in this poll.')
+            } else {
+              alert('Error casting vote: ' + error.message)
+            }
+            loadVotingPolls()
+            return
+          }
+
+          // Success — refresh to show results
+          await loadPollResults(pollId, optionId)
+        } catch (err) {
+          alert('Unexpected error: ' + err.message)
+          loadVotingPolls()
+        }
+      }
+
+      async function loadPollResults(pollId, chosenOptionId) {
+        const card = document.querySelector(`.poll-card[data-poll-id="${pollId}"]`)
+        if (!card) return
+
+        try {
+          const [{ data: options }, { data: votes }, { data: pollData }] = await Promise.all([
+            supabase.from('poll_options').select('id, label').eq('poll_id', pollId),
+            supabase.from('poll_votes').select('option_id').eq('poll_id', pollId),
+            supabase.from('polls').select('title, description').eq('id', pollId).single()
+          ])
+
+          const votesPerOption = {}
+          if (votes) votes.forEach(v => { votesPerOption[v.option_id] = (votesPerOption[v.option_id] || 0) + 1 })
+          const totalVotes = votes ? votes.length : 0
+
+          const barsHtml = (options || []).map(opt => {
+            const count = votesPerOption[opt.id] || 0
+            const pct = totalVotes === 0 ? 0 : Math.round((count / totalVotes) * 100)
+            const isChosen = opt.id === chosenOptionId
+            return `
+              <div class="result-bar-wrap ${isChosen ? 'my-vote' : ''}">
+                <div class="result-label">
+                  <span>${opt.label}${isChosen ? ' ✓' : ''}</span>
+                  <span>${count} vote${count !== 1 ? 's' : ''} (${pct}%)</span>
+                </div>
+                <div class="result-bar-track">
+                  <div class="result-bar" style="width:${pct}%"></div>
+                </div>
+              </div>`
+          }).join('')
+
+          card.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+              <h4 style="margin:0;font-size:1.05rem;">${pollData ? pollData.title : ''}</h4>
+              <span class="poll-status-badge open">🟢 Open</span>
+            </div>
+            ${pollData && pollData.description ? `<p class="muted" style="font-size:0.88rem;margin-bottom:16px;">${pollData.description}</p>` : '<div style="margin-bottom:12px;"></div>'}
+            ${barsHtml}
+            <p class="muted" style="font-size:0.82rem;margin-top:12px;">✅ You have already voted in this poll.</p>`
+        } catch (err) {
+          console.error('Error loading poll results:', err)
+        }
       }
 
       // ── Navigation Logic ──────────────────────────────────────────
@@ -783,6 +986,19 @@
                     </tr>
                   </tbody>
                 </table>
+              </div>
+            </section>
+          </div>
+
+          <!-- Vote -->
+          <div id="vote" class="page-section span-12" style="display: none;">
+            <section class="card">
+              <div class="card-head">
+                <h3>Polls &amp; Voting</h3>
+                <p class="muted">Cast your vote on open polls</p>
+              </div>
+              <div id="votingPollsContainer">
+                <p class="muted" style="text-align:center; padding:24px;">Loading polls...</p>
               </div>
             </section>
           </div>

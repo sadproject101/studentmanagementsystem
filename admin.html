@@ -59,6 +59,7 @@
                     <a href="#marks" class="nav-item">Marks</a>
                     <a href="#leave" class="nav-item">Leave Requests</a>
                     <a href="#complaints" class="nav-item">Complaints</a>
+                    <a href="#polls" class="nav-item">Polls / Voting</a>
                     <a href="#" id="openCreateUserModalBtn" class="nav-item">Create User</a>
 
                     <!-- Hidden file input for CSV -->
@@ -288,7 +289,79 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Polls / Voting Section -->
+            <div id="polls" class="grid page-section" style="display: none; margin-top:0;">
+                <div class="card span-12">
+                    <div class="card-head" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <h3>Polls &amp; Voting</h3>
+                            <p class="muted">Create and manage polls for students</p>
+                        </div>
+                        <button id="openCreatePollBtn" class="btn btn-primary">+ Create Poll</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Title</th>
+                                    <th>Description</th>
+                                    <th>Status</th>
+                                    <th>Total Votes</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pollsTableBody">
+                                <tr><td colspan="5" style="text-align:center">Loading polls...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Poll Results Expander -->
+                    <div id="pollResultsExpander" style="display:none; margin-top:16px; padding:16px; background:rgba(255,255,255,0.03); border-radius:12px; border:1px solid var(--border);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                            <h4 id="pollResultsTitle" style="margin:0;">Poll Results</h4>
+                            <button id="closePollResultsBtn" class="btn btn-small btn-outline">Close</button>
+                        </div>
+                        <div id="pollResultsBars"></div>
+                    </div>
+                </div>
+            </div>
         </main>
+    </div>
+
+    <!-- Create Poll Modal -->
+    <div id="createPollModal" class="modal">
+        <div class="modal-content" style="max-width:560px; max-height:90vh; overflow-y:auto;">
+            <h3 style="margin-bottom:16px;">Create New Poll</h3>
+            <form id="createPollForm" class="form">
+                <div class="field">
+                    <label>Poll Title / Question</label>
+                    <input type="text" id="pollTitle" placeholder="e.g. Choose Class Representative" required />
+                </div>
+                <div class="field">
+                    <label>Description (optional)</label>
+                    <textarea id="pollDescription" rows="2" placeholder="Brief context about this poll"></textarea>
+                </div>
+                <div>
+                    <label style="display:block; margin-bottom:8px; font-size:0.9rem; color:var(--muted);">Options (min 2)</label>
+                    <div id="pollOptionsContainer" style="display:grid; gap:8px;">
+                        <div class="poll-option-row" style="display:flex; gap:8px; align-items:center;">
+                            <input type="text" class="poll-option-input" placeholder="Option 1" required style="flex:1;" />
+                            <button type="button" class="btn btn-small btn-outline remove-option-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3); display:none;">✕</button>
+                        </div>
+                        <div class="poll-option-row" style="display:flex; gap:8px; align-items:center;">
+                            <input type="text" class="poll-option-input" placeholder="Option 2" required style="flex:1;" />
+                            <button type="button" class="btn btn-small btn-outline remove-option-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3); display:none;">✕</button>
+                        </div>
+                    </div>
+                    <button type="button" id="addOptionBtn" class="btn btn-small btn-outline" style="margin-top:8px;">+ Add Option</button>
+                </div>
+                <div style="display:flex; gap:12px; justify-content:flex-end; margin-top:8px;">
+                    <button type="button" id="closeCreatePollBtn" class="btn btn-outline">Cancel</button>
+                    <button type="submit" id="submitCreatePollBtn" class="btn btn-primary">Create Poll</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- Admin Reason Modal for Complaints -->
@@ -477,6 +550,7 @@
             const session = await checkSession()
             if (session && session.user) {
                 currentAdminId = session.user.id;
+                loadPolls()
                 loadNotifications()
                 setupRealtimeSubscription()
                 fetchComplaints()
@@ -628,6 +702,227 @@
                 attendanceTableBody.querySelectorAll('tr').forEach(row => {
                     row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none'
                 })
+            })
+
+            // ── Polls / Voting ──────────────────────────────────────────────
+            let allPollsData = []
+
+            async function loadPolls() {
+                const tbody = document.getElementById('pollsTableBody')
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">Loading...</td></tr>'
+
+                try {
+                    // Fetch polls
+                    const { data: polls, error: pollsErr } = await supabase
+                        .from('polls')
+                        .select('*')
+                        .order('created_at', { ascending: false })
+                    if (pollsErr) throw pollsErr
+
+                    if (!polls || polls.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center" class="muted">No polls yet. Create one!</td></tr>'
+                        allPollsData = []
+                        return
+                    }
+
+                    // Fetch all vote counts grouped by poll_id
+                    const { data: votes } = await supabase.from('poll_votes').select('poll_id')
+                    const voteCounts = {}
+                    if (votes) votes.forEach(v => { voteCounts[v.poll_id] = (voteCounts[v.poll_id] || 0) + 1 })
+
+                    allPollsData = polls
+                    tbody.innerHTML = polls.map(p => {
+                        const isOpen = p.status === 'open'
+                        const statusClass = isOpen ? 'good' : 'warn'
+                        const count = voteCounts[p.id] || 0
+                        return `
+                            <tr>
+                                <td><strong>${p.title}</strong></td>
+                                <td class="muted" style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.description || '-'}</td>
+                                <td><span class="pill ${statusClass}">${isOpen ? '🟢 Open' : '🔴 Closed'}</span></td>
+                                <td><strong>${count}</strong></td>
+                                <td class="action-btns">
+                                    <button class="btn btn-small btn-outline view-poll-results-btn" data-id="${p.id}" data-title="${p.title.replace(/"/g,'&quot;')}">Results</button>
+                                    <button class="btn btn-small btn-outline toggle-poll-btn" data-id="${p.id}" data-status="${p.status}">${isOpen ? 'Close' : 'Reopen'}</button>
+                                    <button class="btn btn-small btn-outline delete-poll-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3);" data-id="${p.id}">Delete</button>
+                                </td>
+                            </tr>`
+                    }).join('')
+
+                    // Bind action buttons
+                    document.querySelectorAll('.view-poll-results-btn').forEach(btn => {
+                        btn.addEventListener('click', () => showPollResults(btn.dataset.id, btn.dataset.title))
+                    })
+                    document.querySelectorAll('.toggle-poll-btn').forEach(btn => {
+                        btn.addEventListener('click', () => togglePollStatus(btn.dataset.id, btn.dataset.status))
+                    })
+                    document.querySelectorAll('.delete-poll-btn').forEach(btn => {
+                        btn.addEventListener('click', () => deletePoll(btn.dataset.id))
+                    })
+
+                } catch (err) {
+                    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#ff5b5b;">Error: ${err.message}</td></tr>`
+                }
+            }
+
+            async function togglePollStatus(id, currentStatus) {
+                const newStatus = currentStatus === 'open' ? 'closed' : 'open'
+                const { error } = await supabase.from('polls').update({ status: newStatus }).eq('id', id)
+                if (error) return alert('Error: ' + error.message)
+                loadPolls()
+            }
+
+            async function deletePoll(id) {
+                if (!confirm('Delete this poll? All votes will also be deleted.')) return
+                const { error } = await supabase.from('polls').delete().eq('id', id)
+                if (error) return alert('Error: ' + error.message)
+                document.getElementById('pollResultsExpander').style.display = 'none'
+                loadPolls()
+            }
+
+            async function showPollResults(pollId, title) {
+                const expander = document.getElementById('pollResultsExpander')
+                const bars = document.getElementById('pollResultsBars')
+                document.getElementById('pollResultsTitle').textContent = `Results: ${title}`
+                bars.innerHTML = '<p class="muted">Loading...</p>'
+                expander.style.display = 'block'
+                expander.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+
+                try {
+                    const { data: options } = await supabase.from('poll_options').select('id, label').eq('poll_id', pollId)
+                    const { data: votes } = await supabase.from('poll_votes').select('option_id').eq('poll_id', pollId)
+
+                    const votesPerOption = {}
+                    if (votes) votes.forEach(v => { votesPerOption[v.option_id] = (votesPerOption[v.option_id] || 0) + 1 })
+                    const totalVotes = votes ? votes.length : 0
+
+                    if (!options || options.length === 0) {
+                        bars.innerHTML = '<p class="muted">No options found.</p>'
+                        return
+                    }
+
+                    bars.innerHTML = options.map(opt => {
+                        const count = votesPerOption[opt.id] || 0
+                        const pct = totalVotes === 0 ? 0 : Math.round((count / totalVotes) * 100)
+                        return `
+                            <div class="result-bar-wrap">
+                                <div class="result-label">
+                                    <span>${opt.label}</span>
+                                    <span>${count} vote${count !== 1 ? 's' : ''} (${pct}%)</span>
+                                </div>
+                                <div class="result-bar-track">
+                                    <div class="result-bar" style="width:${pct}%"></div>
+                                </div>
+                            </div>`
+                    }).join('')
+
+                    if (totalVotes === 0) {
+                        bars.innerHTML += '<p class="muted" style="margin-top:8px;">No votes cast yet.</p>'
+                    }
+                } catch (err) {
+                    bars.innerHTML = `<p style="color:#ff5b5b;">Error loading: ${err.message}</p>`
+                }
+            }
+
+            document.getElementById('closePollResultsBtn').addEventListener('click', () => {
+                document.getElementById('pollResultsExpander').style.display = 'none'
+            })
+
+            // ── Create Poll Modal ──
+            const createPollModal = document.getElementById('createPollModal')
+            const createPollForm = document.getElementById('createPollForm')
+            const pollOptionsContainer = document.getElementById('pollOptionsContainer')
+
+            document.getElementById('openCreatePollBtn').addEventListener('click', () => {
+                createPollForm.reset()
+                // Reset to exactly 2 option rows
+                pollOptionsContainer.innerHTML = `
+                    <div class="poll-option-row" style="display:flex; gap:8px; align-items:center;">
+                        <input type="text" class="poll-option-input" placeholder="Option 1" required style="flex:1;" />
+                        <button type="button" class="btn btn-small btn-outline remove-option-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3); display:none;">✕</button>
+                    </div>
+                    <div class="poll-option-row" style="display:flex; gap:8px; align-items:center;">
+                        <input type="text" class="poll-option-input" placeholder="Option 2" required style="flex:1;" />
+                        <button type="button" class="btn btn-small btn-outline remove-option-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3); display:none;">✕</button>
+                    </div>`
+                createPollModal.classList.add('active')
+            })
+
+            document.getElementById('closeCreatePollBtn').addEventListener('click', () => {
+                createPollModal.classList.remove('active')
+            })
+
+            document.getElementById('addOptionBtn').addEventListener('click', () => {
+                const idx = pollOptionsContainer.querySelectorAll('.poll-option-row').length + 1
+                const row = document.createElement('div')
+                row.className = 'poll-option-row'
+                row.style.cssText = 'display:flex; gap:8px; align-items:center;'
+                row.innerHTML = `
+                    <input type="text" class="poll-option-input" placeholder="Option ${idx}" required style="flex:1;" />
+                    <button type="button" class="btn btn-small btn-outline remove-option-btn" style="color:#ff5b5b; border-color:rgba(255,91,91,0.3);">✕</button>`
+                row.querySelector('.remove-option-btn').addEventListener('click', () => {
+                    row.remove()
+                    updateRemoveButtons()
+                })
+                pollOptionsContainer.appendChild(row)
+                updateRemoveButtons()
+            })
+
+            function updateRemoveButtons() {
+                const rows = pollOptionsContainer.querySelectorAll('.poll-option-row')
+                rows.forEach((row, i) => {
+                    const btn = row.querySelector('.remove-option-btn')
+                    btn.style.display = rows.length > 2 ? 'flex' : 'none'
+                })
+            }
+
+            // Bind remove on initial 2 rows
+            pollOptionsContainer.querySelectorAll('.remove-option-btn').forEach(btn => {
+                btn.addEventListener('click', () => { btn.closest('.poll-option-row').remove(); updateRemoveButtons() })
+            })
+
+            createPollForm.addEventListener('submit', async (e) => {
+                e.preventDefault()
+                const submitBtn = document.getElementById('submitCreatePollBtn')
+                submitBtn.disabled = true
+                submitBtn.textContent = 'Creating...'
+
+                const title = document.getElementById('pollTitle').value.trim()
+                const description = document.getElementById('pollDescription').value.trim()
+                const options = Array.from(document.querySelectorAll('.poll-option-input'))
+                    .map(inp => inp.value.trim())
+                    .filter(v => v !== '')
+
+                if (options.length < 2) {
+                    alert('Please provide at least 2 options.')
+                    submitBtn.disabled = false
+                    submitBtn.textContent = 'Create Poll'
+                    return
+                }
+
+                try {
+                    // Insert poll
+                    const { data: poll, error: pollErr } = await supabase
+                        .from('polls')
+                        .insert([{ title, description: description || null, created_by: currentAdminId }])
+                        .select()
+                        .single()
+                    if (pollErr) throw pollErr
+
+                    // Insert options
+                    const optionRows = options.map(label => ({ poll_id: poll.id, label }))
+                    const { error: optErr } = await supabase.from('poll_options').insert(optionRows)
+                    if (optErr) throw optErr
+
+                    createPollModal.classList.remove('active')
+                    loadPolls()
+                    alert('Poll created successfully!')
+                } catch (err) {
+                    alert('Error creating poll: ' + err.message)
+                } finally {
+                    submitBtn.disabled = false
+                    submitBtn.textContent = 'Create Poll'
+                }
             })
 
             // ── Load Marks ──────────────────────────────────────────────────

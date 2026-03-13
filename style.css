@@ -457,3 +457,106 @@ tbody tr:hover{
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+/* ---------- Poll / Voting ---------- */
+.poll-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+  transition: border-color 0.2s ease;
+}
+.poll-card:last-child { margin-bottom: 0; }
+.poll-card:hover { border-color: rgba(91,124,250,0.35); }
+
+/* Option buttons — radio-like */
+.vote-options-wrap {
+  display: grid;
+  gap: 10px;
+}
+.vote-option-btn {
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+.vote-option-btn:hover:not(:disabled) {
+  background: rgba(91,124,250,0.15);
+  border-color: rgba(91,124,250,0.5);
+  transform: translateX(4px);
+}
+.vote-option-btn:active:not(:disabled) {
+  transform: translateX(2px);
+}
+.vote-option-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.vote-option-btn.selected {
+  background: rgba(91,124,250,0.2);
+  border-color: #5b7cfa;
+}
+
+/* Result bars */
+.result-bar-wrap {
+  margin-bottom: 12px;
+}
+.result-bar-wrap:last-of-type { margin-bottom: 0; }
+.result-bar-wrap.my-vote .result-label span:first-child {
+  color: #7ca8ff;
+  font-weight: 600;
+}
+.result-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.88rem;
+  margin-bottom: 5px;
+  color: var(--text);
+}
+.result-label span:last-child {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.result-bar-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.07);
+  overflow: hidden;
+}
+.result-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #5b7cfa, #9c5bfa);
+  transition: width 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  min-width: 2px;
+}
+.result-bar-wrap.my-vote .result-bar {
+  background: linear-gradient(90deg, #7ca8ff, #c47cff);
+}
+
+/* Poll status badge */
+.poll-status-badge {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.poll-status-badge.open {
+  background: rgba(91,250,170,0.1);
+  border-color: rgba(91,250,170,0.25);
+}
+.poll-status-badge.closed {
+  background: rgba(255,91,91,0.1);
+  border-color: rgba(255,91,91,0.25);
+}

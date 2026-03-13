@@ -1,0 +1,142 @@
+# Voting / Polling System
+
+A dynamic voting system where admins create polls with custom questions and multiple options (e.g., Class Representative election, Elective Subject selection). Students vote on open polls and see live results. Double-voting is prevented at the database level.
+
+## Proposed Changes
+
+---
+
+### Database (run in Supabase SQL Editor)
+
+#### 3 New Tables + RLS Policies
+
+```sql
+-- 1. polls: master poll record, created by admin
+CREATE TABLE public.polls (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title       TEXT NOT NULL,
+  description TEXT,
+  status      TEXT NOT NULL DEFAULT 'open'  -- 'open' | 'closed'
+              CHECK (status IN ('open', 'closed')),
+  created_by  UUID REFERENCES auth.users(id),
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. poll_options: each option that can be voted for
+CREATE TABLE public.poll_options (
+  id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  poll_id  UUID NOT NULL REFERENCES public.polls(id) ON DELETE CASCADE,
+  label    TEXT NOT NULL
+);
+
+-- 3. poll_votes: one row per user per poll (enforced by UNIQUE constraint)
+CREATE TABLE public.poll_votes (
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  poll_id   UUID NOT NULL REFERENCES public.polls(id) ON DELETE CASCADE,
+  option_id UUID NOT NULL REFERENCES public.poll_options(id) ON DELETE CASCADE,
+  voter_id  UUID NOT NULL REFERENCES auth.users(id),
+  voted_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (poll_id, voter_id)   -- prevents double-voting
+);
+
+-- Enable realtime
+ALTER PUBLICATION supabase_realtime ADD TABLE public.poll_votes;
+
+-- ── RLS Policies ─────────────────────────────────────────────────
+
+ALTER TABLE public.polls       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.poll_options ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.poll_votes  ENABLE ROW LEVEL SECURITY;
+
+-- polls: all authenticated users can read
+CREATE POLICY "Read polls" ON public.polls FOR SELECT TO authenticated USING (true);
+-- polls: only admin can insert/update/delete (use service role or rely on auth check in code)
+CREATE POLICY "Admin manage polls" ON public.polls FOR ALL TO authenticated
+  USING (true) WITH CHECK (true);  -- restrict further if you have admin role column
+
+-- poll_options: all authenticated can read
+CREATE POLICY "Read options" ON public.poll_options FOR SELECT TO authenticated USING (true);
+-- poll_options: authenticated can insert (admin only in practice via UI)
+CREATE POLICY "Admin manage options" ON public.poll_options FOR ALL TO authenticated
+  USING (true) WITH CHECK (true);
+
+-- poll_votes: users can only read their own vote + all votes for counting
+CREATE POLICY "Read votes" ON public.poll_votes FOR SELECT TO authenticated USING (true);
+-- poll_votes: authenticated user can insert only their own vote
+CREATE POLICY "Cast own vote" ON public.poll_votes FOR INSERT TO authenticated
+  WITH CHECK (voter_id = auth.uid());
+-- No UPDATE or DELETE on votes (immutable)
+```
+
+---
+
+### [MODIFY] admin.html
+
+#### Sidebar
+- Add nav item: `<a href="#polls" class="nav-item">Polls / Voting</a>`
+
+#### New `#polls` page section (HTML)
+- Header with "Polls & Voting" and a "Create Poll" button
+- Table listing all polls: Title, Status badge, Vote Count, Actions (Toggle open/close, Delete)
+- Clicking a poll row expands vote-count breakdown per option
+
+#### Create Poll Modal (HTML)
+- Fields: Title (`text`), Description (`textarea`), Options (dynamic — "Add Option" button appends input rows)
+- Submit creates row in `polls` then bulk-inserts rows into `poll_options`
+
+#### JS functions added inside the existing `<script type="module">`
+| Function | What it does |
+|---|---|
+| `loadPolls()` | Fetches all polls + counts votes per option via JS aggregation |
+| `openCreatePollModal()` | Resets and shows the create-poll modal |
+| `addOptionField()` | Dynamically appends an option input row |
+| `submitCreatePoll()` | Inserts poll then bulk-inserts options |
+| `togglePollStatus(id, status)` | Updates `polls.status` to open/closed |
+| `deletePoll(id)` | Deletes poll (cascade deletes options + votes) |
+| `showPollResults(pollId)` | Inline expander showing per-option vote counts |
+
+---
+
+### [MODIFY] student.html
+
+#### Sidebar
+- Add nav item: `<a href="#vote" class="nav-item">Vote</a>`
+
+#### New `#vote` page section (HTML)
+- Dynamically renders open polls as cards
+- Each card shows question + radio-button-style option buttons
+- After voting: replaced with a read-only horizontal bar chart of results
+
+#### JS functions
+| Function | What it does |
+|---|---|
+| `loadVotingPolls()` | Fetches polls where `status = 'open'`, checks if student already voted |
+| `castVote(pollId, optionId)` | Inserts a row to `poll_votes`; on success refreshes the card to show results |
+| `loadPollResults(pollId, optionId?)` | Counts votes per option, renders percentage bar chart |
+
+---
+
+### [MODIFY] style.css
+
+Add styles for:
+- `.poll-card` — card wrapper for a single poll on student page
+- `.vote-option` — clickable radio-like option button (hover highlight, selected state)
+- `.result-bar-wrap`, `.result-bar`, `.result-label` — horizontal progress bar result rows
+- `.poll-status-badge` — colored badge matching existing `.pill` pattern
+
+---
+
+## Verification Plan
+
+### Manual Verification (step-by-step)
+
+1. **Run the SQL** in Supabase SQL Editor — confirm 3 tables appear in Table Editor.
+2. **Login as Admin** → navigate to [admin.html](file:///c:/Users/laptop/Documents/sadproject/studentmanagement/admin.html) → click **Polls / Voting** in sidebar.
+3. Click **Create Poll** → fill "Class Representative Election" + 3 options → Submit → poll appears in table with status `open`.
+4. Click the status toggle → status changes to `closed` and badge updates.
+5. Toggle back to `open`.
+6. **Login as Student** → navigate to [student.html](file:///c:/Users/laptop/Documents/sadproject/studentmanagement/student.html) → click **Vote** in sidebar.
+7. The open poll appears → select an option → click **Vote** → button disappears, results bar chart appears with your vote counted.
+8. Refresh the page → the poll still shows results (already voted state), no vote button.
+9. Try voting again by direct Supabase insert (or a second student account) → UNIQUE constraint blocks duplicate.
+10. **Back to Admin** → vote count column updates to reflect votes.
